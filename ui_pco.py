@@ -106,6 +106,7 @@ def pco_dashboard(drive_service, sheets_service):
 
     elif selected_tab == "Manage MCM Periods":
         st.markdown("<h3>Manage Existing MCM Periods</h3>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color: red;'>Pls Note ,Deleting the records will delete all the DAR and Spreadsheet data uploaded for that month.</h4>", unsafe_allow_html=True)
         if not mcm_periods:
             st.info("No MCM periods created yet.")
         else:
