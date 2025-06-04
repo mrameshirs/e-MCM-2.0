@@ -1,414 +1,337 @@
 # ui_audit_group.py
 import streamlit as st
-import datetime
-import time
 import pandas as pd
+import datetime
+import math # For math.ceil
 from io import BytesIO
-from streamlit_option_menu import option_menu
 
-# Assuming these utilities are correctly defined and imported
 from google_utils import (
-    load_mcm_periods, upload_to_drive, append_to_spreadsheet,
-    read_from_spreadsheet, delete_spreadsheet_rows
+    load_mcm_periods,
+    upload_to_drive,
+    append_to_spreadsheet
 )
-from dar_processor import preprocess_pdf_text 
-from gemini_utils import get_structured_data_with_gemini
-from validation_utils import validate_data_for_sheet, VALID_CATEGORIES # Ensure VALID_CATEGORIES is imported if used
-from config import USER_CREDENTIALS 
+from dar_processor import preprocess_pdf_text #
+from gemini_utils import get_structured_data_with_gemini #
+from validation_utils import validate_data_for_sheet, VALID_CATEGORIES, VALID_PARA_STATUSES #
+from config import AUDIT_GROUP_NUMBERS #
+from models import ParsedDARReport #
+
+# Define expected column order for the DataFrame editor and final sheet upload
+# This must match the header in google_utils.append_to_spreadsheet
+EXPECTED_DF_COLUMNS = [
+    "audit_group_number", "audit_circle_number", "gstin", "trade_name", "category",
+    "total_amount_detected_overall_rs", "total_amount_recovered_overall_rs",
+    "audit_para_number", "audit_para_heading",
+    "revenue_involved_lakhs_rs", "revenue_recovered_lakhs_rs", "status_of_para",
+    # "dar_pdf_url", "record_created_date" # These are added at the end before sheet append
+]
+
+DISPLAY_COLUMN_ORDER = [ # For st.data_editor, to have a more logical flow for editing
+    "audit_group_number", "audit_circle_number", "gstin", "trade_name", "category",
+    "audit_para_number", "audit_para_heading", "status_of_para",
+    "revenue_involved_lakhs_rs", "revenue_recovered_lakhs_rs",
+    "total_amount_detected_overall_rs", "total_amount_recovered_overall_rs"
+]
+
+
+def calculate_audit_circle(audit_group_number_val):
+    try:
+        agn = int(audit_group_number_val)
+        if 1 <= agn <= 30:
+            return math.ceil(agn / 3.0) # Use 3.0 for float division before ceil
+        return None
+    except (ValueError, TypeError):
+        return None
 
 def audit_group_dashboard(drive_service, sheets_service):
-    st.markdown(f"<div class='sub-header'>Audit Group {st.session_state.audit_group_no} Dashboard</div>",
-                unsafe_allow_html=True)
-    mcm_periods = load_mcm_periods(drive_service)
-    active_periods = {k: v for k, v in mcm_periods.items() if v.get("active")}
-    
-    YOUR_GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "YOUR_API_KEY_HERE") # Ensure this is fetched
+    st.markdown("<div class='sub-header'>Audit Group Dashboard</div>", unsafe_allow_html=True)
+    mcm_periods_all = load_mcm_periods(drive_service)
+    mcm_periods_active = {k: v for k, v in mcm_periods_all.items() if v.get("active", False)}
+
+    # --- Initialize session state for audit group ---
+    if 'ag_selected_mcm_key' not in st.session_state: st.session_state.ag_selected_mcm_key = None
+    if 'ag_uploaded_pdf' not in st.session_state: st.session_state.ag_uploaded_pdf = None
+    if 'ag_current_extracted_data' not in st.session_state: st.session_state.ag_current_extracted_data = [] # List of dicts
+    if 'ag_editor_data' not in st.session_state: st.session_state.ag_editor_data = pd.DataFrame()
+    if 'ag_validation_errors' not in st.session_state: st.session_state.ag_validation_errors = []
+    if 'ag_pdf_drive_url' not in st.session_state: st.session_state.ag_pdf_drive_url = None
+    if 'ag_current_mcm_dar_folder_id' not in st.session_state: st.session_state.ag_current_mcm_dar_folder_id = None
+    if 'ag_current_mcm_spreadsheet_id' not in st.session_state: st.session_state.ag_current_mcm_spreadsheet_id = None
+    if 'ag_processing_done' not in st.session_state: st.session_state.ag_processing_done = False
+    if 'ag_upload_successful' not in st.session_state: st.session_state.ag_upload_successful = False
+
 
     with st.sidebar:
-        # Changed to use local logo.png
         try:
             st.image("logo.png", width=80)
-        except Exception as e:
-            st.sidebar.warning(f"Could not load logo.png: {e}")
-            st.sidebar.markdown("*(Logo)*") # Fallback text
-
-        st.markdown(f"**User:** {st.session_state.username}<br>**Group No:** {st.session_state.audit_group_no}",
-                    unsafe_allow_html=True)
+        except Exception:
+            st.markdown("*(Logo)*")
+        st.markdown(f"**User:** {st.session_state.username}")
+        st.markdown(f"**Role:** {st.session_state.role}")
+        st.markdown(f"**Audit Group No:** {st.session_state.audit_group_no}") # From app.py
         if st.button("Logout", key="ag_logout_styled", use_container_width=True):
-            for key_to_del in ['ag_current_extracted_data', 'ag_pdf_drive_url', 'ag_validation_errors',
-                               'ag_editor_data', 'ag_current_mcm_key', 'ag_current_uploaded_file_name',
-                               'ag_row_to_delete_details', 'ag_show_delete_confirm', 'drive_structure_initialized']: # ensure all relevant keys are cleared
-                if key_to_del in st.session_state: del st.session_state[key_to_del]
+            # Clear AG specific session state
+            for key in list(st.session_state.keys()):
+                if key.startswith('ag_'):
+                    del st.session_state[key]
             st.session_state.logged_in = False
             st.session_state.username = ""
             st.session_state.role = ""
             st.session_state.audit_group_no = None
+            st.session_state.drive_structure_initialized = False
             st.rerun()
         st.markdown("---")
 
-    selected_tab = option_menu(
-        menu_title=None, options=["Upload DAR for MCM", "View My Uploaded DARs", "Delete My DAR Entries"],
-        icons=["cloud-upload-fill", "eye-fill", "trash2-fill"], menu_icon="person-workspace", default_index=0,
-        orientation="horizontal",
-        styles={
-            "container": {"padding": "5px !important", "background-color": "#e9ecef"},
-            "icon": {"color": "#28a745", "font-size": "20px"},
-            "nav-link": {"font-size": "16px", "text-align": "center", "margin": "0px", "--hover-color": "#d4edda"},
-            "nav-link-selected": {"background-color": "#28a745", "color": "white"},
-        })
     st.markdown("<div class='card'>", unsafe_allow_html=True)
 
-    if selected_tab == "Upload DAR for MCM":
-        st.markdown("<h3>Upload DAR PDF for MCM Period</h3>", unsafe_allow_html=True)
-        if not active_periods:
-            st.warning("No active MCM periods. Contact Planning Officer.")
-        else:
-            period_options = {
-                                 f"{p.get('month_name')} {p.get('year')}": k
-                                 for k, p in sorted(active_periods.items(), reverse=True)
-                                 if p.get('month_name') and p.get('year')
-                             }
-            if not period_options and active_periods:
-                st.warning("Some active MCM periods have incomplete data (missing month/year) and are not shown as options.")
-            
-            selected_period_display = st.selectbox("Select Active MCM Period", options=list(period_options.keys()),
-                                                   key="ag_select_mcm_upload_key") # Ensure unique key
-            if selected_period_display:
-                selected_mcm_key = period_options[selected_period_display]
-                mcm_info = mcm_periods[selected_mcm_key]
-                if st.session_state.get('ag_current_mcm_key') != selected_mcm_key:
-                    st.session_state.ag_current_extracted_data = []
-                    st.session_state.ag_pdf_drive_url = None
-                    st.session_state.ag_validation_errors = []
-                    st.session_state.ag_editor_data = pd.DataFrame() # Requires pandas
-                    st.session_state.ag_current_mcm_key = selected_mcm_key
-                    st.session_state.ag_current_uploaded_file_name = None
-                st.info(f"Uploading for: {mcm_info['month_name']} {mcm_info['year']}")
-                
-                # Ensure uploader_key_suffix is initialized if used
-                if 'uploader_key_suffix' not in st.session_state:
-                    st.session_state.uploader_key_suffix = 0
-                
-                uploaded_dar_file = st.file_uploader("Choose DAR PDF", type="pdf",
-                                                     key=f"dar_upload_ag_{selected_mcm_key}_{st.session_state.uploader_key_suffix}")
+    if not mcm_periods_active:
+        st.warning("No active MCM periods found. Please contact the Planning & Coordination Officer.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
 
-                if uploaded_dar_file:
-                    if st.session_state.get('ag_current_uploaded_file_name') != uploaded_dar_file.name:
-                        st.session_state.ag_current_extracted_data = []
-                        st.session_state.ag_pdf_drive_url = None
-                        st.session_state.ag_validation_errors = []
-                        st.session_state.ag_editor_data = pd.DataFrame()
-                        st.session_state.ag_current_uploaded_file_name = uploaded_dar_file.name
+    # --- 1. Select MCM Period ---
+    period_options = {
+        k: f"{v.get('month_name')} {v.get('year')}"
+        for k, v in sorted(mcm_periods_active.items(), key=lambda item: item[0], reverse=True)
+    }
+    selected_key = st.selectbox(
+        "Select Active MCM Period for DAR Upload",
+        options=list(period_options.keys()),
+        format_func=lambda k: period_options[k],
+        key="ag_mcm_period_select",
+        index=0 if period_options else None,
+        disabled=st.session_state.ag_processing_done # Disable if processing has started for a file
+    )
 
-                    if st.button("Extract Data from PDF", key=f"extract_ag_btn_{selected_mcm_key}", use_container_width=True): # ensure unique key
-                        st.session_state.ag_validation_errors = []
-                        with st.spinner("Processing PDF & AI extraction..."):
-                            dar_pdf_bytes = uploaded_dar_file.getvalue()
-                            dar_filename_on_drive = f"AG{st.session_state.audit_group_no}_{uploaded_dar_file.name}"
-                            st.session_state.ag_pdf_drive_url = None # Reset before upload attempt
-                            
-                            pdf_drive_id, pdf_drive_url_temp = upload_to_drive(drive_service, dar_pdf_bytes,
-                                                                               mcm_info['drive_folder_id'], dar_filename_on_drive)
-                            if not pdf_drive_id:
-                                st.error("Failed to upload PDF to Drive.");
-                                st.session_state.ag_editor_data = pd.DataFrame([{"audit_group_number": st.session_state.audit_group_no, "audit_para_heading": "Manual Entry - PDF Upload Failed"}])
-                            else:
-                                st.session_state.ag_pdf_drive_url = pdf_drive_url_temp
-                                st.success(f"DAR PDF on Drive: [Link]({st.session_state.ag_pdf_drive_url})")
-                                
-                                preprocessed_text = preprocess_pdf_text(BytesIO(dar_pdf_bytes)) # Assuming preprocess_pdf_text is correctly imported
-                                
-                                if preprocessed_text.startswith("Error"): # Check for preprocessing error
-                                    st.error(f"PDF Preprocessing Error: {preprocessed_text}");
-                                    st.session_state.ag_editor_data = pd.DataFrame([{"audit_group_number": st.session_state.audit_group_no, "audit_para_heading": "Manual Entry - PDF Error"}])
-                                else:
-                                    # Assuming get_structured_data_with_gemini is correctly imported
-                                    parsed_report_obj = get_structured_data_with_gemini(YOUR_GEMINI_API_KEY, preprocessed_text)
-                                    temp_list = []
-                                    ai_failed = True # Assume failure unless proven otherwise
-                                    
-                                    if parsed_report_obj.parsing_errors: 
-                                        st.warning(f"AI Parsing Issues: {parsed_report_obj.parsing_errors}")
-                                    
-                                    if parsed_report_obj and parsed_report_obj.header:
-                                        h = parsed_report_obj.header
-                                        ai_failed = False # Got header, so not a complete failure
-                                        if parsed_report_obj.audit_paras: # If there are audit paras
-                                            for p_data_item in parsed_report_obj.audit_paras: # Renamed p to p_data_item
-                                                temp_list.append({
-                                                    "audit_group_number": st.session_state.audit_group_no, 
-                                                    "gstin": h.gstin, "trade_name": h.trade_name, "category": h.category, 
-                                                    "total_amount_detected_overall_rs": h.total_amount_detected_overall_rs, 
-                                                    "total_amount_recovered_overall_rs": h.total_amount_recovered_overall_rs, 
-                                                    "audit_para_number": p_data_item.audit_para_number, 
-                                                    "audit_para_heading": p_data_item.audit_para_heading, 
-                                                    "revenue_involved_lakhs_rs": p_data_item.revenue_involved_lakhs_rs, 
-                                                    "revenue_recovered_lakhs_rs": p_data_item.revenue_recovered_lakhs_rs
-                                                })
-                                        elif h.trade_name: # Header info present but no paras
-                                            temp_list.append({
-                                                "audit_group_number": st.session_state.audit_group_no, 
-                                                "gstin": h.gstin, "trade_name": h.trade_name, "category": h.category, 
-                                                "total_amount_detected_overall_rs": h.total_amount_detected_overall_rs, 
-                                                "total_amount_recovered_overall_rs": h.total_amount_recovered_overall_rs, 
-                                                "audit_para_number": None, # No para number
-                                                "audit_para_heading": "N/A - Header Info Only (Add Paras Manually)", # Special heading
-                                                "revenue_involved_lakhs_rs": None, 
-                                                "revenue_recovered_lakhs_rs": None
-                                            })
-                                        else: # Header info itself is problematic (e.g., no trade_name)
-                                            st.error("AI failed to extract key header information (like Trade Name)."); 
-                                            ai_failed = True
-                                    
-                                    if ai_failed or not temp_list: # If AI failed or produced an empty list
-                                        st.warning("AI extraction failed or yielded no usable data. Please fill manually.")
-                                        st.session_state.ag_editor_data = pd.DataFrame([{"audit_group_number": st.session_state.audit_group_no, "audit_para_heading": "Manual Entry Required"}])
-                                    else: 
-                                        st.session_state.ag_editor_data = pd.DataFrame(temp_list)
-                                        st.info("Data extracted. Review & edit below.")
-                
-                if not isinstance(st.session_state.get('ag_editor_data'), pd.DataFrame): 
-                    st.session_state.ag_editor_data = pd.DataFrame() # Ensure it's a DataFrame
+    if selected_key and selected_key != st.session_state.ag_selected_mcm_key:
+        st.session_state.ag_selected_mcm_key = selected_key
+        st.session_state.ag_current_mcm_dar_folder_id = mcm_periods_active[selected_key]['drive_folder_id']
+        st.session_state.ag_current_mcm_spreadsheet_id = mcm_periods_active[selected_key]['spreadsheet_id']
+        # Reset states if MCM period changes
+        st.session_state.ag_uploaded_pdf = None
+        st.session_state.ag_current_extracted_data = []
+        st.session_state.ag_editor_data = pd.DataFrame()
+        st.session_state.ag_validation_errors = []
+        st.session_state.ag_pdf_drive_url = None
+        st.session_state.ag_processing_done = False
+        st.session_state.ag_upload_successful = False
+        st.rerun()
 
-                # This condition handles the case where PDF was uploaded, extraction ran, but editor_data is still empty.
-                if uploaded_dar_file and st.session_state.ag_editor_data.empty and st.session_state.get('ag_pdf_drive_url'): 
-                    st.warning("AI couldn't extract data or no data was previously loaded. A template row is provided for manual entry.")
-                    st.session_state.ag_editor_data = pd.DataFrame([{"audit_group_number": st.session_state.audit_group_no, "audit_para_heading": "Manual Entry"}])
 
-                if not st.session_state.ag_editor_data.empty:
-                    st.markdown("<h4>Review and Edit Extracted Data:</h4>", unsafe_allow_html=True)
-                    df_to_edit_ag = st.session_state.ag_editor_data.copy()
-                    df_to_edit_ag["audit_group_number"] = st.session_state.audit_group_no # Ensure group number is set
-                    
-                    col_order = ["audit_group_number", "gstin", "trade_name", "category", 
-                                 "total_amount_detected_overall_rs", "total_amount_recovered_overall_rs", 
-                                 "audit_para_number", "audit_para_heading", 
-                                 "revenue_involved_lakhs_rs", "revenue_recovered_lakhs_rs"]
-                    
-                    for col_name in col_order: # Ensure all columns exist
-                        if col_name not in df_to_edit_ag.columns: 
-                            df_to_edit_ag[col_name] = None 
-                    
-                    col_config = {
-                        "audit_group_number": st.column_config.NumberColumn("Audit Group", disabled=True, help="Your Audit Group Number"),
-                        "gstin": st.column_config.TextColumn("GSTIN", help="15-digit GSTIN"),
-                        "trade_name": st.column_config.TextColumn("Trade Name"),
-                        "category": st.column_config.SelectboxColumn("Category", options=VALID_CATEGORIES, required=False), # VALID_CATEGORIES should be imported
-                        "total_amount_detected_overall_rs": st.column_config.NumberColumn("Total Detected (Rs)", format="%.2f", help="Overall detection for the DAR"),
-                        "total_amount_recovered_overall_rs": st.column_config.NumberColumn("Total Recovered (Rs)", format="%.2f", help="Overall recovery for the DAR"),
-                        "audit_para_number": st.column_config.NumberColumn("Para No.", format="%d", help="Para number (integer)"),
-                        "audit_para_heading": st.column_config.TextColumn("Para Heading", width="xlarge"),
-                        "revenue_involved_lakhs_rs": st.column_config.NumberColumn("Rev. Involved (Lakhs)", format="%.2f", help="Para-specific revenue involved in Lakhs Rs."),
-                        "revenue_recovered_lakhs_rs": st.column_config.NumberColumn("Rev. Recovered (Lakhs)", format="%.2f", help="Para-specific revenue recovered in Lakhs Rs.")
-                    }
-                    
-                    editor_key = f"ag_editor_form_{selected_mcm_key}_{st.session_state.ag_current_uploaded_file_name or 'no_file_uploaded'}" # ensure unique key
-                    edited_df = st.data_editor(
-                        df_to_edit_ag.reindex(columns=col_order), # Ensure consistent column order
-                        column_config=col_config, 
-                        num_rows="dynamic", 
-                        key=editor_key, 
-                        use_container_width=True, 
-                        height=400
-                    )
+    if not st.session_state.ag_selected_mcm_key:
+        st.info("Please select an MCM period to proceed.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
 
-                    if st.button("Validate and Submit to MCM Sheet", key=f"submit_ag_data_{selected_mcm_key}", use_container_width=True): # ensure unique key
-                        current_data_to_submit = pd.DataFrame(edited_df) # Use the output from data_editor
-                        current_data_to_submit["audit_group_number"] = st.session_state.audit_group_no # Re-ensure audit group number
-                        
-                        val_errors = validate_data_for_sheet(current_data_to_submit) # Assuming validate_data_for_sheet is imported
-                        st.session_state.ag_validation_errors = val_errors
-                        
-                        if not val_errors:
-                            if not st.session_state.ag_pdf_drive_url: 
-                                st.error("PDF Drive URL missing. Re-extract data or ensure PDF was uploaded successfully.")
-                            else:
-                                with st.spinner("Submitting to Google Sheet..."):
-                                    rows_to_append = []
-                                    created_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                    for _, row_item in current_data_to_submit.iterrows(): # Renamed 'row' to 'row_item'
-                                        rows_to_append.append([row_item.get(c_name) for c_name in col_order] + [st.session_state.ag_pdf_drive_url, created_date])
-                                    
-                                    if rows_to_append:
-                                        # Assuming append_to_spreadsheet is imported
-                                        if append_to_spreadsheet(sheets_service, mcm_info['spreadsheet_id'], rows_to_append):
-                                            st.success(f"Data for '{st.session_state.ag_current_uploaded_file_name}' submitted!"); 
-                                            st.balloons(); 
-                                            time.sleep(0.5)
-                                            # Reset session state for next upload
-                                            st.session_state.ag_current_extracted_data = []
-                                            st.session_state.ag_pdf_drive_url = None
-                                            st.session_state.ag_editor_data = pd.DataFrame()
-                                            st.session_state.ag_current_uploaded_file_name = None
-                                            st.session_state.uploader_key_suffix = st.session_state.get('uploader_key_suffix', 0) + 1
-                                            st.rerun()
-                                        else: 
-                                            st.error("Failed to append to Google Sheet.")
-                                    else: 
-                                        st.error("No data to submit after validation (rows_to_append is empty).")
-                        else: 
-                            st.error("Validation Failed! Correct errors below.")
-                
-                if st.session_state.get('ag_validation_errors'):
-                    st.markdown("---"); 
-                    st.subheader("⚠️ Validation Errors:");
-                    for err_msg in st.session_state.ag_validation_errors: # Renamed 'err' to 'err_msg'
-                        st.warning(err_msg)
+    st.info(f"Selected Period: **{period_options[st.session_state.ag_selected_mcm_key]}**")
+    st.markdown("---")
 
-    elif selected_tab == "View My Uploaded DARs":
-        st.markdown("<h3>My Uploaded DARs</h3>", unsafe_allow_html=True)
-        if not mcm_periods: 
-            st.info("No MCM periods by PCO yet.")
-        else:
-            all_period_options = {
-                f"{p.get('month_name')} {p.get('year')}": k 
-                for k,p in sorted(mcm_periods.items(),key=lambda item:item[0],reverse=True) 
-                if p.get('month_name') and p.get('year')
-            }
-            if not all_period_options and mcm_periods: 
-                st.warning("Some MCM periods have incomplete data and are not shown.")
-            if not all_period_options: 
-                st.info("No valid MCM periods found.")
+    # --- 2. Upload DAR PDF ---
+    if not st.session_state.ag_processing_done:
+        uploaded_file = st.file_uploader(
+            "Upload Departmental Audit Report (DAR) PDF",
+            type="pdf",
+            key="ag_pdf_uploader"
+        )
+        if uploaded_file and uploaded_file != st.session_state.ag_uploaded_pdf :
+            st.session_state.ag_uploaded_pdf = uploaded_file
+            st.session_state.ag_current_uploaded_file_name = uploaded_file.name # From app.py
+             # Clear previous results when a new file is uploaded
+            st.session_state.ag_current_extracted_data = []
+            st.session_state.ag_editor_data = pd.DataFrame()
+            st.session_state.ag_validation_errors = []
+            st.session_state.ag_pdf_drive_url = None
+            st.session_state.ag_processing_done = False
+            st.session_state.ag_upload_successful = False
+
+
+    if st.session_state.ag_uploaded_pdf and not st.session_state.ag_processing_done:
+        if st.button("Extract Data from PDF", key="ag_process_pdf", type="primary", use_container_width=True):
+            with st.spinner(f"Processing '{st.session_state.ag_uploaded_pdf.name}'... This may take a moment."):
+                pdf_bytes = st.session_state.ag_uploaded_pdf.getvalue()
+                gemini_api_key = st.secrets.get("GEMINI_API_KEY")
+
+                if not gemini_api_key or gemini_api_key == "YOUR_API_KEY_HERE":
+                    st.error("Gemini API Key is not configured in Streamlit Secrets.")
+                    st.stop()
+
+                preprocessed_text = preprocess_pdf_text(BytesIO(pdf_bytes)) #
+
+                if preprocessed_text.startswith("Error processing PDF"):
+                    st.error(f"PDF Preprocessing Error: {preprocessed_text}")
+                else:
+                    parsed_data: ParsedDARReport = get_structured_data_with_gemini(gemini_api_key, preprocessed_text) #
+
+                    if parsed_data.parsing_errors:
+                        st.warning(f"Gemini Parsing Issues: {parsed_data.parsing_errors}")
+
+                    flattened_data_list = []
+                    header_info = parsed_data.header.model_dump() if parsed_data.header else {}
+
+                    # Override/set audit_group_number from session state
+                    session_audit_group_no = st.session_state.get('audit_group_no')
+                    header_info['audit_group_number'] = session_audit_group_no
+
+                    # Calculate audit_circle_number
+                    audit_circle_number = calculate_audit_circle(session_audit_group_no)
+                    header_info['audit_circle_number'] = audit_circle_number
+
+                    if not parsed_data.audit_paras: # If no paras, create one entry with header info
+                         # For "N/A" paras, some fields might be None or explicitly set to N/A
+                        row_data = {col: header_info.get(col) for col in EXPECTED_DF_COLUMNS if col in header_info}
+                        row_data.update({
+                            'audit_para_number': None, # Or some indicator like 0 or "N/A"
+                            'audit_para_heading': "N/A - Header Info Only (Add Paras Manually)",
+                            'revenue_involved_lakhs_rs': None,
+                            'revenue_recovered_lakhs_rs': None,
+                            'status_of_para': None #
+                        })
+                        # Ensure all expected columns are present
+                        for col in EXPECTED_DF_COLUMNS:
+                            if col not in row_data:
+                                row_data[col] = None
+                        flattened_data_list.append(row_data)
+                    else:
+                        for para_obj in parsed_data.audit_paras:
+                            para_info = para_obj.model_dump()
+                            row_data = {col: header_info.get(col) for col in EXPECTED_DF_COLUMNS if col in header_info} # Start with header
+                            row_data.update({col: para_info.get(col) for col in EXPECTED_DF_COLUMNS if col in para_info}) # Update with para
+                            # Ensure all expected columns are present
+                            for col in EXPECTED_DF_COLUMNS:
+                                if col not in row_data:
+                                    row_data[col] = None
+                            flattened_data_list.append(row_data)
+
+                    st.session_state.ag_current_extracted_data = flattened_data_list
+                    df_to_edit = pd.DataFrame(flattened_data_list)
+
+                    # Ensure all EXPECTED_DF_COLUMNS are present in DataFrame, reorder for editor
+                    for col in DISPLAY_COLUMN_ORDER: # Use display order for editor
+                        if col not in df_to_edit.columns:
+                            df_to_edit[col] = None
+                    st.session_state.ag_editor_data = df_to_edit[DISPLAY_COLUMN_ORDER]
+                    st.session_state.ag_processing_done = True
+                    st.success("Data extracted. Please review and edit below if necessary.")
+                    st.rerun() # Rerun to show the editor
+
+    # --- 3. Display Extracted Data in Editable Table & Validate ---
+    if st.session_state.ag_processing_done and not st.session_state.ag_editor_data.empty:
+        st.markdown("<h4>Review and Edit Extracted Data:</h4>", unsafe_allow_html=True)
+
+        # Configure column properties for st.data_editor
+        column_config = {
+            "audit_group_number": st.column_config.NumberColumn("Group No.", disabled=True, help="Audit Group Number (from login)"),
+            "audit_circle_number": st.column_config.NumberColumn("Circle No.", disabled=True, help="Derived Audit Circle Number"),
+            "gstin": st.column_config.TextColumn("GSTIN", width="medium"),
+            "trade_name": st.column_config.TextColumn("Trade Name", width="large"),
+            "category": st.column_config.SelectboxColumn("Category", options=VALID_CATEGORIES, width="small"), #
+            "audit_para_number": st.column_config.NumberColumn("Para No.", min_value=0, step=1, width="small", help="Use 0 or empty for header-only info"),
+            "audit_para_heading": st.column_config.TextColumn("Para Heading", width="large"),
+            "status_of_para": st.column_config.SelectboxColumn("Para Status", options=VALID_PARA_STATUSES + [None], width="medium"), #
+            "revenue_involved_lakhs_rs": st.column_config.NumberColumn("Rev. Involved (Lakhs)", format="%.2f", width="small"),
+            "revenue_recovered_lakhs_rs": st.column_config.NumberColumn("Rev. Recovered (Lakhs)", format="%.2f", width="small"),
+            "total_amount_detected_overall_rs": st.column_config.NumberColumn("Total Detect (Rs)", format="%.2f", width="medium"),
+            "total_amount_recovered_overall_rs": st.column_config.NumberColumn("Total Recover (Rs)", format="%.2f", width="medium"),
+        }
+
+        edited_df = st.data_editor(
+            st.session_state.ag_editor_data,
+            column_config=column_config,
+            num_rows="dynamic", # Allow adding/deleting rows
+            key="ag_data_editor",
+            use_container_width=True,
+            hide_index=True
+        )
+        st.session_state.ag_editor_data = edited_df # Update session state with edits
+
+        # --- Validation ---
+        if st.button("Validate Data", key="ag_validate_data", use_container_width=True):
+            st.session_state.ag_validation_errors = validate_data_for_sheet(st.session_state.ag_editor_data) #
+            if not st.session_state.ag_validation_errors:
+                st.success("Data validation successful! No errors found. Ready to upload.")
             else:
-                selected_view_period_display = st.selectbox("Select MCM Period", options=list(all_period_options.keys()), key="ag_view_my_dars_period_key") # Unique key
+                st.error("Validation Errors Found:")
+                for error in st.session_state.ag_validation_errors:
+                    st.markdown(f"- {error}")
 
-                if selected_view_period_display and sheets_service:
-                    selected_view_period_key = all_period_options[selected_view_period_display]
-                    sheet_id = mcm_periods[selected_view_period_key]['spreadsheet_id']
-                    with st.spinner("Loading your uploads..."): 
-                        df_all = read_from_spreadsheet(sheets_service, sheet_id) # Assuming read_from_spreadsheet is imported
-                    
-                    if not df_all.empty and 'Audit Group Number' in df_all.columns:
-                        df_all['Audit Group Number'] = df_all['Audit Group Number'].astype(str) # Ensure consistent type for comparison
-                        my_uploads_df = df_all[df_all['Audit Group Number'] == str(st.session_state.audit_group_no)]
-                        
-                        if not my_uploads_df.empty:
-                            st.markdown(f"<h4>Your Uploads for {selected_view_period_display}:</h4>", unsafe_allow_html=True)
-                            df_display = my_uploads_df.copy()
-                            if 'DAR PDF URL' in df_display.columns: 
-                                df_display['DAR PDF URL'] = df_display['DAR PDF URL'].apply(
-                                    lambda x: f'<a href="{x}" target="_blank">View PDF</a>' if pd.notna(x) and str(x).startswith("http") else "No Link"
-                                )
-                            view_cols = ["Trade Name", "Category", "Audit Para Number", "Audit Para Heading", "DAR PDF URL", "Record Created Date"]
-                            existing_view_cols = [col for col in view_cols if col in df_display.columns] # Filter for existing columns
-                            st.markdown(df_display[existing_view_cols].to_html(escape=False, index=False), unsafe_allow_html=True)
-                        else: 
-                            st.info(f"No DARs uploaded by you for {selected_view_period_display}.")
-                    elif df_all.empty: 
-                        st.info(f"No data in MCM sheet for {selected_view_period_display}.")
-                    else: # df_all not empty but 'Audit Group Number' column missing
-                        st.warning("Spreadsheet missing 'Audit Group Number' column.")
-                elif not sheets_service and selected_view_period_display: # If period selected but service is down
-                    st.error("Google Sheets service not available.")
+        # --- 4. Upload to Google Drive & Sheet ---
+        if not st.session_state.ag_validation_errors and st.session_state.ag_processing_done: # Only show if validation passed OR not yet run
+            if st.button("Confirm and Upload to Google Sheet", key="ag_upload_sheet", type="primary", use_container_width=True,
+                         disabled=(st.session_state.ag_editor_data.empty or bool(st.session_state.ag_validation_errors))): # Disable if errors exist after validation
+                with st.spinner("Uploading files and data..."):
+                    # 1. Upload PDF to Drive
+                    pdf_file_bytes = st.session_state.ag_uploaded_pdf.getvalue()
+                    dar_folder_id = st.session_state.ag_current_mcm_dar_folder_id
+                    pdf_filename = st.session_state.ag_uploaded_pdf.name
+
+                    drive_pdf_id, drive_pdf_url = upload_to_drive(drive_service, BytesIO(pdf_file_bytes), dar_folder_id, pdf_filename) #
+                    if not drive_pdf_url:
+                        st.error("Failed to upload PDF to Google Drive. Aborting sheet upload.")
+                        st.stop()
+                    st.session_state.ag_pdf_drive_url = drive_pdf_url
+                    st.success(f"PDF uploaded to Drive: {drive_pdf_url}")
+
+                    # 2. Prepare data for Google Sheet
+                    rows_to_append = []
+                    final_df_to_upload = st.session_state.ag_editor_data.copy()
+
+                    # Ensure all columns from EXPECTED_DF_COLUMNS are present, even if empty, and in correct order for sheet
+                    for col in EXPECTED_DF_COLUMNS:
+                        if col not in final_df_to_upload.columns:
+                             final_df_to_upload[col] = None # Add missing columns, might be filled if they were in original extraction but not in DISPLAY_COLUMN_ORDER
+
+                    # Fill derived fields again based on potentially edited data, ensure correct types
+                    final_df_to_upload['audit_group_number'] = st.session_state.audit_group_no
+                    final_df_to_upload['audit_circle_number'] = final_df_to_upload['audit_group_number'].apply(calculate_audit_circle)
 
 
-    elif selected_tab == "Delete My DAR Entries":
-        st.markdown("<h3>Delete My Uploaded DAR Entries</h3>", unsafe_allow_html=True)
-        st.info("Select MCM period to view entries. Deletion removes entry from Google Sheet; PDF on Drive remains.")
-        if not mcm_periods: 
-            st.info("No MCM periods created yet.")
-        else:
-            all_period_options_del = {
-                f"{p.get('month_name')} {p.get('year')}": k 
-                for k, p in sorted(mcm_periods.items(),key=lambda item:item[0],reverse=True) 
-                if p.get('month_name') and p.get('year')
-            }
-            if not all_period_options_del and mcm_periods: 
-                st.warning("Some MCM periods have incomplete data and are not shown.")
-            
-            selected_del_period_display = st.selectbox("Select MCM Period", options=list(all_period_options_del.keys()), key="ag_del_dars_period_key") # Unique key
+                    for _, row in final_df_to_upload.iterrows():
+                        # Construct row in the precise order for Google Sheet
+                        sheet_row = [
+                            row.get('audit_group_number'),
+                            row.get('audit_circle_number'),
+                            row.get('gstin'),
+                            row.get('trade_name'),
+                            row.get('category'),
+                            row.get('total_amount_detected_overall_rs'),
+                            row.get('total_amount_recovered_overall_rs'),
+                            row.get('audit_para_number'),
+                            row.get('audit_para_heading'),
+                            row.get('revenue_involved_lakhs_rs'),
+                            row.get('revenue_recovered_lakhs_rs'),
+                            row.get('status_of_para'),
+                            st.session_state.ag_pdf_drive_url, # PDF URL from Drive upload
+                            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        ]
+                        rows_to_append.append(sheet_row)
 
-            if selected_del_period_display and sheets_service:
-                selected_del_period_key = all_period_options_del[selected_del_period_display]
-                sheet_id_to_manage = mcm_periods[selected_del_period_key]['spreadsheet_id']
-                first_sheet_gid = 0 # Default GID
-                try:
-                    meta = sheets_service.spreadsheets().get(spreadsheetId=sheet_id_to_manage).execute()
-                    first_sheet_gid = meta.get('sheets', [{}])[0].get('properties', {}).get('sheetId', 0)
-                except Exception as e_gid: 
-                    st.error(f"Could not fetch sheet GID: {e_gid}")
+                    # 3. Append to Spreadsheet
+                    spreadsheet_id = st.session_state.ag_current_mcm_spreadsheet_id
+                    append_result = append_to_spreadsheet(sheets_service, spreadsheet_id, rows_to_append) #
 
-                with st.spinner("Loading your uploads..."): 
-                    df_all_del = read_from_spreadsheet(sheets_service, sheet_id_to_manage)
-                
-                if not df_all_del.empty and 'Audit Group Number' in df_all_del.columns:
-                    df_all_del['Audit Group Number'] = df_all_del['Audit Group Number'].astype(str)
-                    my_uploads_df_del = df_all_del[df_all_del['Audit Group Number'] == str(st.session_state.audit_group_no)].copy()
-                    my_uploads_df_del.reset_index(inplace=True) # Keep original DataFrame index for internal mapping if needed later
-                    my_uploads_df_del.rename(columns={'index': 'original_df_index'}, inplace=True) # Not strictly used here, but good practice
+                    if append_result:
+                        st.success("Data successfully uploaded to Google Sheet!")
+                        st.balloons()
+                        st.session_state.ag_upload_successful = True
+                        # Optionally reset parts of the state for a new upload
+                        st.session_state.ag_processing_done = False # Allow new file upload
+                        st.session_state.ag_uploaded_pdf = None
+                        st.session_state.ag_editor_data = pd.DataFrame()
+                        st.session_state.ag_current_extracted_data = []
+                        st.session_state.ag_validation_errors = []
 
-                    if not my_uploads_df_del.empty:
-                        st.markdown(f"<h4>Your Uploads in {selected_del_period_display} (Select to delete):</h4>", unsafe_allow_html=True)
-                        options_for_del = ["--Select an entry--"]
-                        
-                        # Initialize ag_deletable_map in session_state if not present
-                        if 'ag_deletable_map' not in st.session_state:
-                            st.session_state.ag_deletable_map = {}
-                        else: # Clear map for the current selection context
-                            st.session_state.ag_deletable_map.clear() 
+                        # Trigger rerun to clear UI elements for next upload within same MCM period
+                        time.sleep(1) # give time for user to see success
+                        st.rerun()
+                    else:
+                        st.error("Failed to upload data to Google Sheet.")
+        elif st.session_state.ag_validation_errors:
+             st.warning("Please resolve validation errors before uploading.")
 
-                        for idx, row_data_item_del in my_uploads_df_del.iterrows(): # Renamed 'row'
-                            ident_str = f"Entry (TN: {str(row_data_item_del.get('Trade Name', 'N/A'))[:20]}..., Para: {row_data_item_del.get('Audit Para Number', 'N/A')}, Date: {row_data_item_del.get('Record Created Date', 'N/A')})"
-                            options_for_del.append(ident_str)
-                            # Store identifiable data for matching
-                            st.session_state.ag_deletable_map[ident_str] = {
-                                "trade_name": str(row_data_item_del.get('Trade Name')),
-                                "audit_para_number": str(row_data_item_del.get('Audit Para Number')), # Compare as strings
-                                "record_created_date": str(row_data_item_del.get('Record Created Date')),
-                                "dar_pdf_url": str(row_data_item_del.get('DAR PDF URL'))
-                            }
-                        
-                        selected_entry_del_display = st.selectbox("Select Entry to Delete:", options_for_del, key=f"del_sel_box_{selected_del_period_key}") # Unique key
 
-                        if selected_entry_del_display != "--Select an entry--":
-                            row_ident_data = st.session_state.ag_deletable_map.get(selected_entry_del_display)
-                            if row_ident_data:
-                                st.warning(f"Selected to delete: **{row_ident_data.get('trade_name')} - Para {row_ident_data.get('audit_para_number')}** (Uploaded: {row_ident_data.get('record_created_date')})")
-                                with st.form(key=f"del_ag_form_final_{selected_entry_del_display.replace(' ', '_')}"): # Unique key
-                                    ag_pass = st.text_input("Your Password:", type="password", key=f"ag_pass_del_confirm_{selected_entry_del_display.replace(' ', '_')}") # Unique key
-                                    submitted_del = st.form_submit_button("Confirm Deletion")
-                                    
-                                    if submitted_del:
-                                        if ag_pass == USER_CREDENTIALS.get(st.session_state.username): # USER_CREDENTIALS should be imported
-                                            current_sheet_df = read_from_spreadsheet(sheets_service, sheet_id_to_manage) # Re-fetch
-                                            if not current_sheet_df.empty:
-                                                indices_to_del_sheet = []
-                                                # Exact matching against re-fetched data
-                                                for sheet_idx, sheet_row_data in current_sheet_df.iterrows(): # Renamed 'sheet_row'
-                                                    match_conditions = [
-                                                        str(sheet_row_data.get('Audit Group Number')) == str(st.session_state.audit_group_no),
-                                                        str(sheet_row_data.get('Trade Name')) == row_ident_data.get('trade_name'),
-                                                        str(sheet_row_data.get('Audit Para Number')) == row_ident_data.get('audit_para_number'),
-                                                        str(sheet_row_data.get('Record Created Date')) == row_ident_data.get('record_created_date'),
-                                                        str(sheet_row_data.get('DAR PDF URL')) == row_ident_data.get('dar_pdf_url')
-                                                    ]
-                                                    if all(match_conditions): 
-                                                        indices_to_del_sheet.append(sheet_idx) # 0-based index from read_from_spreadsheet (data part)
-                                                
-                                                if indices_to_del_sheet:
-                                                    # Assuming delete_spreadsheet_rows is imported
-                                                    if delete_spreadsheet_rows(sheets_service, sheet_id_to_manage, first_sheet_gid, indices_to_del_sheet):
-                                                        st.success(f"Entry for '{row_ident_data.get('trade_name')}' deleted."); 
-                                                        time.sleep(0.5); 
-                                                        st.rerun()
-                                                    else: 
-                                                        st.error("Failed to delete from sheet.")
-                                                else: 
-                                                    st.error("Could not find exact entry to delete. It might have been already deleted or modified.")
-                                            else: 
-                                                st.error("Could not re-fetch sheet data for deletion verification.")
-                                        else: 
-                                            st.error("Incorrect password.")
-                            else: 
-                                st.error("Could not retrieve details for selected entry. Please re-select.")
-                    else: 
-                        st.info(f"You have no uploads in {selected_del_period_display} to delete.")
-                elif df_all_del.empty: 
-                    st.info(f"No data in MCM sheet for {selected_del_period_display}.")
-                else: # df_all_del not empty but 'Audit Group Number' column missing
-                    st.warning("Spreadsheet missing 'Audit Group Number' column.")
-            elif not sheets_service and selected_del_period_display: # If period selected but service is down
-                st.error("Google Sheets service not available.")
+    if st.session_state.ag_upload_successful and not st.session_state.ag_processing_done : # if upload was successful and state reset
+        st.info("You can now upload another DAR for the selected MCM period or choose a different period.")
+
 
     st.markdown("</div>", unsafe_allow_html=True)# # ui_audit_group.py
 # import streamlit as st
@@ -418,35 +341,38 @@ def audit_group_dashboard(drive_service, sheets_service):
 # from io import BytesIO
 # from streamlit_option_menu import option_menu
 
+# # Assuming these utilities are correctly defined and imported
 # from google_utils import (
 #     load_mcm_periods, upload_to_drive, append_to_spreadsheet,
 #     read_from_spreadsheet, delete_spreadsheet_rows
 # )
-# from dar_processor import preprocess_pdf_text  # Assuming dar_processor.py provides this
+# from dar_processor import preprocess_pdf_text 
 # from gemini_utils import get_structured_data_with_gemini
-# from validation_utils import validate_data_for_sheet, VALID_CATEGORIES
-# from config import USER_CREDENTIALS  # For password confirmation
-
+# from validation_utils import validate_data_for_sheet, VALID_CATEGORIES # Ensure VALID_CATEGORIES is imported if used
+# from config import USER_CREDENTIALS 
 
 # def audit_group_dashboard(drive_service, sheets_service):
 #     st.markdown(f"<div class='sub-header'>Audit Group {st.session_state.audit_group_no} Dashboard</div>",
 #                 unsafe_allow_html=True)
 #     mcm_periods = load_mcm_periods(drive_service)
 #     active_periods = {k: v for k, v in mcm_periods.items() if v.get("active")}
-
-#     # Fetch Gemini API Key from secrets
-#     YOUR_GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "YOUR_API_KEY_HERE")
+    
+#     YOUR_GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "YOUR_API_KEY_HERE") # Ensure this is fetched
 
 #     with st.sidebar:
-#         st.image(
-#             "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c9/Indian_Ministry_of_Finance_logo.svg/1200px-Indian_Ministry_of_Finance_logo.svg.png",
-#             width=80)
+#         # Changed to use local logo.png
+#         try:
+#             st.image("logo.png", width=80)
+#         except Exception as e:
+#             st.sidebar.warning(f"Could not load logo.png: {e}")
+#             st.sidebar.markdown("*(Logo)*") # Fallback text
+
 #         st.markdown(f"**User:** {st.session_state.username}<br>**Group No:** {st.session_state.audit_group_no}",
 #                     unsafe_allow_html=True)
 #         if st.button("Logout", key="ag_logout_styled", use_container_width=True):
 #             for key_to_del in ['ag_current_extracted_data', 'ag_pdf_drive_url', 'ag_validation_errors',
 #                                'ag_editor_data', 'ag_current_mcm_key', 'ag_current_uploaded_file_name',
-#                                'ag_row_to_delete_details', 'ag_show_delete_confirm', 'drive_structure_initialized']:
+#                                'ag_row_to_delete_details', 'ag_show_delete_confirm', 'drive_structure_initialized']: # ensure all relevant keys are cleared
 #                 if key_to_del in st.session_state: del st.session_state[key_to_del]
 #             st.session_state.logged_in = False
 #             st.session_state.username = ""
@@ -473,317 +399,726 @@ def audit_group_dashboard(drive_service, sheets_service):
 #             st.warning("No active MCM periods. Contact Planning Officer.")
 #         else:
 #             period_options = {
-#                 f"{p.get('month_name')} {p.get('year')}": k
-#                 for k, p in sorted(active_periods.items(), reverse=True)
-#                 if p.get('month_name') and p.get('year')
-#             }
+#                                  f"{p.get('month_name')} {p.get('year')}": k
+#                                  for k, p in sorted(active_periods.items(), reverse=True)
+#                                  if p.get('month_name') and p.get('year')
+#                              }
 #             if not period_options and active_periods:
-#                 st.warning(
-#                     "Some active MCM periods have incomplete data (missing month/year) and are not shown as options.")
-
+#                 st.warning("Some active MCM periods have incomplete data (missing month/year) and are not shown as options.")
+            
 #             selected_period_display = st.selectbox("Select Active MCM Period", options=list(period_options.keys()),
-#                                                    key="ag_select_mcm_upload")
+#                                                    key="ag_select_mcm_upload_key") # Ensure unique key
 #             if selected_period_display:
 #                 selected_mcm_key = period_options[selected_period_display]
 #                 mcm_info = mcm_periods[selected_mcm_key]
 #                 if st.session_state.get('ag_current_mcm_key') != selected_mcm_key:
-#                     st.session_state.ag_current_extracted_data = [];
+#                     st.session_state.ag_current_extracted_data = []
 #                     st.session_state.ag_pdf_drive_url = None
-#                     st.session_state.ag_validation_errors = [];
-#                     st.session_state.ag_editor_data = pd.DataFrame()
-#                     st.session_state.ag_current_mcm_key = selected_mcm_key;
+#                     st.session_state.ag_validation_errors = []
+#                     st.session_state.ag_editor_data = pd.DataFrame() # Requires pandas
+#                     st.session_state.ag_current_mcm_key = selected_mcm_key
 #                     st.session_state.ag_current_uploaded_file_name = None
 #                 st.info(f"Uploading for: {mcm_info['month_name']} {mcm_info['year']}")
+                
+#                 # Ensure uploader_key_suffix is initialized if used
+#                 if 'uploader_key_suffix' not in st.session_state:
+#                     st.session_state.uploader_key_suffix = 0
+                
 #                 uploaded_dar_file = st.file_uploader("Choose DAR PDF", type="pdf",
-#                                                      key=f"dar_upload_ag_{selected_mcm_key}_{st.session_state.get('uploader_key_suffix', 0)}")
+#                                                      key=f"dar_upload_ag_{selected_mcm_key}_{st.session_state.uploader_key_suffix}")
 
 #                 if uploaded_dar_file:
 #                     if st.session_state.get('ag_current_uploaded_file_name') != uploaded_dar_file.name:
-#                         st.session_state.ag_current_extracted_data = [];
+#                         st.session_state.ag_current_extracted_data = []
 #                         st.session_state.ag_pdf_drive_url = None
-#                         st.session_state.ag_validation_errors = [];
+#                         st.session_state.ag_validation_errors = []
 #                         st.session_state.ag_editor_data = pd.DataFrame()
 #                         st.session_state.ag_current_uploaded_file_name = uploaded_dar_file.name
 
-#                     if st.button("Extract Data from PDF", key=f"extract_ag_{selected_mcm_key}",
-#                                  use_container_width=True):
+#                     if st.button("Extract Data from PDF", key=f"extract_ag_btn_{selected_mcm_key}", use_container_width=True): # ensure unique key
 #                         st.session_state.ag_validation_errors = []
 #                         with st.spinner("Processing PDF & AI extraction..."):
 #                             dar_pdf_bytes = uploaded_dar_file.getvalue()
 #                             dar_filename_on_drive = f"AG{st.session_state.audit_group_no}_{uploaded_dar_file.name}"
-#                             st.session_state.ag_pdf_drive_url = None
+#                             st.session_state.ag_pdf_drive_url = None # Reset before upload attempt
+                            
 #                             pdf_drive_id, pdf_drive_url_temp = upload_to_drive(drive_service, dar_pdf_bytes,
-#                                                                                mcm_info['drive_folder_id'],
-#                                                                                dar_filename_on_drive)
+#                                                                                mcm_info['drive_folder_id'], dar_filename_on_drive)
 #                             if not pdf_drive_id:
 #                                 st.error("Failed to upload PDF to Drive.");
-#                                 st.session_state.ag_editor_data = pd.DataFrame([{
-#                                                                                     "audit_group_number": st.session_state.audit_group_no,
-#                                                                                     "audit_para_heading": "Manual Entry - PDF Upload Failed"}])
+#                                 st.session_state.ag_editor_data = pd.DataFrame([{"audit_group_number": st.session_state.audit_group_no, "audit_para_heading": "Manual Entry - PDF Upload Failed"}])
 #                             else:
 #                                 st.session_state.ag_pdf_drive_url = pdf_drive_url_temp
 #                                 st.success(f"DAR PDF on Drive: [Link]({st.session_state.ag_pdf_drive_url})")
-#                                 preprocessed_text = preprocess_pdf_text(BytesIO(dar_pdf_bytes))
-#                                 if preprocessed_text.startswith("Error"):
+                                
+#                                 preprocessed_text = preprocess_pdf_text(BytesIO(dar_pdf_bytes)) # Assuming preprocess_pdf_text is correctly imported
+                                
+#                                 if preprocessed_text.startswith("Error"): # Check for preprocessing error
 #                                     st.error(f"PDF Preprocessing Error: {preprocessed_text}");
-#                                     st.session_state.ag_editor_data = pd.DataFrame([{
-#                                                                                         "audit_group_number": st.session_state.audit_group_no,
-#                                                                                         "audit_para_heading": "Manual Entry - PDF Error"}])
+#                                     st.session_state.ag_editor_data = pd.DataFrame([{"audit_group_number": st.session_state.audit_group_no, "audit_para_heading": "Manual Entry - PDF Error"}])
 #                                 else:
-#                                     parsed_report_obj = get_structured_data_with_gemini(YOUR_GEMINI_API_KEY,
-#                                                                                         preprocessed_text)
+#                                     # Assuming get_structured_data_with_gemini is correctly imported
+#                                     parsed_report_obj = get_structured_data_with_gemini(YOUR_GEMINI_API_KEY, preprocessed_text)
 #                                     temp_list = []
-#                                     ai_failed = True
-#                                     if parsed_report_obj.parsing_errors: st.warning(
-#                                         f"AI Parsing Issues: {parsed_report_obj.parsing_errors}")
+#                                     ai_failed = True # Assume failure unless proven otherwise
+                                    
+#                                     if parsed_report_obj.parsing_errors: 
+#                                         st.warning(f"AI Parsing Issues: {parsed_report_obj.parsing_errors}")
+                                    
 #                                     if parsed_report_obj and parsed_report_obj.header:
-#                                         h = parsed_report_obj.header;
-#                                         ai_failed = False
-#                                         if parsed_report_obj.audit_paras:
-#                                             for p in parsed_report_obj.audit_paras: temp_list.append(
-#                                                 {"audit_group_number": st.session_state.audit_group_no,
-#                                                  "gstin": h.gstin, "trade_name": h.trade_name, "category": h.category,
-#                                                  "total_amount_detected_overall_rs": h.total_amount_detected_overall_rs,
-#                                                  "total_amount_recovered_overall_rs": h.total_amount_recovered_overall_rs,
-#                                                  "audit_para_number": p.audit_para_number,
-#                                                  "audit_para_heading": p.audit_para_heading,
-#                                                  "revenue_involved_lakhs_rs": p.revenue_involved_lakhs_rs,
-#                                                  "revenue_recovered_lakhs_rs": p.revenue_recovered_lakhs_rs})
-#                                         elif h.trade_name:
-#                                             temp_list.append({"audit_group_number": st.session_state.audit_group_no,
-#                                                               "gstin": h.gstin, "trade_name": h.trade_name,
-#                                                               "category": h.category,
-#                                                               "total_amount_detected_overall_rs": h.total_amount_detected_overall_rs,
-#                                                               "total_amount_recovered_overall_rs": h.total_amount_recovered_overall_rs,
-#                                                               "audit_para_heading": "N/A - Header Info Only (Add Paras Manually)"})
-#                                         else:
-#                                             st.error("AI failed to extract key header info."); ai_failed = True
-#                                     if ai_failed or not temp_list:
-#                                         st.warning("AI extraction failed or yielded no data. Please fill manually.")
-#                                         st.session_state.ag_editor_data = pd.DataFrame([{
-#                                                                                             "audit_group_number": st.session_state.audit_group_no,
-#                                                                                             "audit_para_heading": "Manual Entry Required"}])
-#                                     else:
-#                                         st.session_state.ag_editor_data = pd.DataFrame(temp_list); st.info(
-#                                             "Data extracted. Review & edit below.")
+#                                         h = parsed_report_obj.header
+#                                         ai_failed = False # Got header, so not a complete failure
+#                                         if parsed_report_obj.audit_paras: # If there are audit paras
+#                                             for p_data_item in parsed_report_obj.audit_paras: # Renamed p to p_data_item
+#                                                 temp_list.append({
+#                                                     "audit_group_number": st.session_state.audit_group_no, 
+#                                                     "gstin": h.gstin, "trade_name": h.trade_name, "category": h.category, 
+#                                                     "total_amount_detected_overall_rs": h.total_amount_detected_overall_rs, 
+#                                                     "total_amount_recovered_overall_rs": h.total_amount_recovered_overall_rs, 
+#                                                     "audit_para_number": p_data_item.audit_para_number, 
+#                                                     "audit_para_heading": p_data_item.audit_para_heading, 
+#                                                     "revenue_involved_lakhs_rs": p_data_item.revenue_involved_lakhs_rs, 
+#                                                     "revenue_recovered_lakhs_rs": p_data_item.revenue_recovered_lakhs_rs
+#                                                 })
+#                                         elif h.trade_name: # Header info present but no paras
+#                                             temp_list.append({
+#                                                 "audit_group_number": st.session_state.audit_group_no, 
+#                                                 "gstin": h.gstin, "trade_name": h.trade_name, "category": h.category, 
+#                                                 "total_amount_detected_overall_rs": h.total_amount_detected_overall_rs, 
+#                                                 "total_amount_recovered_overall_rs": h.total_amount_recovered_overall_rs, 
+#                                                 "audit_para_number": None, # No para number
+#                                                 "audit_para_heading": "N/A - Header Info Only (Add Paras Manually)", # Special heading
+#                                                 "revenue_involved_lakhs_rs": None, 
+#                                                 "revenue_recovered_lakhs_rs": None
+#                                             })
+#                                         else: # Header info itself is problematic (e.g., no trade_name)
+#                                             st.error("AI failed to extract key header information (like Trade Name)."); 
+#                                             ai_failed = True
+                                    
+#                                     if ai_failed or not temp_list: # If AI failed or produced an empty list
+#                                         st.warning("AI extraction failed or yielded no usable data. Please fill manually.")
+#                                         st.session_state.ag_editor_data = pd.DataFrame([{"audit_group_number": st.session_state.audit_group_no, "audit_para_heading": "Manual Entry Required"}])
+#                                     else: 
+#                                         st.session_state.ag_editor_data = pd.DataFrame(temp_list)
+#                                         st.info("Data extracted. Review & edit below.")
+                
+#                 if not isinstance(st.session_state.get('ag_editor_data'), pd.DataFrame): 
+#                     st.session_state.ag_editor_data = pd.DataFrame() # Ensure it's a DataFrame
 
-#                 if not isinstance(st.session_state.get('ag_editor_data'),
-#                                   pd.DataFrame): st.session_state.ag_editor_data = pd.DataFrame()
-#                 if uploaded_dar_file and st.session_state.ag_editor_data.empty and st.session_state.get(
-#                         'ag_pdf_drive_url'):
-#                     st.warning("AI couldn't extract data or none loaded. Template row provided.")
-#                     st.session_state.ag_editor_data = pd.DataFrame(
-#                         [{"audit_group_number": st.session_state.audit_group_no, "audit_para_heading": "Manual Entry"}])
+#                 # This condition handles the case where PDF was uploaded, extraction ran, but editor_data is still empty.
+#                 if uploaded_dar_file and st.session_state.ag_editor_data.empty and st.session_state.get('ag_pdf_drive_url'): 
+#                     st.warning("AI couldn't extract data or no data was previously loaded. A template row is provided for manual entry.")
+#                     st.session_state.ag_editor_data = pd.DataFrame([{"audit_group_number": st.session_state.audit_group_no, "audit_para_heading": "Manual Entry"}])
 
 #                 if not st.session_state.ag_editor_data.empty:
 #                     st.markdown("<h4>Review and Edit Extracted Data:</h4>", unsafe_allow_html=True)
-#                     df_to_edit_ag = st.session_state.ag_editor_data.copy();
-#                     df_to_edit_ag["audit_group_number"] = st.session_state.audit_group_no
-#                     col_order = ["audit_group_number", "gstin", "trade_name", "category",
-#                                  "total_amount_detected_overall_rs", "total_amount_recovered_overall_rs",
-#                                  "audit_para_number", "audit_para_heading", "revenue_involved_lakhs_rs",
-#                                  "revenue_recovered_lakhs_rs"]
-#                     for col in col_order:
-#                         if col not in df_to_edit_ag.columns: df_to_edit_ag[col] = None
-#                     col_config = {"audit_group_number": st.column_config.NumberColumn("Audit Group", disabled=True),
-#                                   "gstin": st.column_config.TextColumn("GSTIN"),
-#                                   "trade_name": st.column_config.TextColumn("Trade Name"),
-#                                   "category": st.column_config.SelectboxColumn("Category", options=VALID_CATEGORIES),
-#                                   "total_amount_detected_overall_rs": st.column_config.NumberColumn(
-#                                       "Total Detected (Rs)", format="%.2f"),
-#                                   "total_amount_recovered_overall_rs": st.column_config.NumberColumn(
-#                                       "Total Recovered (Rs)", format="%.2f"),
-#                                   "audit_para_number": st.column_config.NumberColumn("Para No.", format="%d"),
-#                                   "audit_para_heading": st.column_config.TextColumn("Para Heading", width="xlarge"),
-#                                   "revenue_involved_lakhs_rs": st.column_config.NumberColumn("Rev. Involved (Lakhs)",
-#                                                                                              format="%.2f"),
-#                                   "revenue_recovered_lakhs_rs": st.column_config.NumberColumn("Rev. Recovered (Lakhs)",
-#                                                                                               format="%.2f")}
-#                     editor_key = f"ag_editor_{selected_mcm_key}_{st.session_state.ag_current_uploaded_file_name or 'no_file'}"
-#                     edited_df = st.data_editor(df_to_edit_ag.reindex(columns=col_order), column_config=col_config,
-#                                                num_rows="dynamic", key=editor_key, use_container_width=True, height=400)
+#                     df_to_edit_ag = st.session_state.ag_editor_data.copy()
+#                     df_to_edit_ag["audit_group_number"] = st.session_state.audit_group_no # Ensure group number is set
+                    
+#                     col_order = ["audit_group_number", "gstin", "trade_name", "category", 
+#                                  "total_amount_detected_overall_rs", "total_amount_recovered_overall_rs", 
+#                                  "audit_para_number", "audit_para_heading", 
+#                                  "revenue_involved_lakhs_rs", "revenue_recovered_lakhs_rs"]
+                    
+#                     for col_name in col_order: # Ensure all columns exist
+#                         if col_name not in df_to_edit_ag.columns: 
+#                             df_to_edit_ag[col_name] = None 
+                    
+#                     col_config = {
+#                         "audit_group_number": st.column_config.NumberColumn("Audit Group", disabled=True, help="Your Audit Group Number"),
+#                         "gstin": st.column_config.TextColumn("GSTIN", help="15-digit GSTIN"),
+#                         "trade_name": st.column_config.TextColumn("Trade Name"),
+#                         "category": st.column_config.SelectboxColumn("Category", options=VALID_CATEGORIES, required=False), # VALID_CATEGORIES should be imported
+#                         "total_amount_detected_overall_rs": st.column_config.NumberColumn("Total Detected (Rs)", format="%.2f", help="Overall detection for the DAR"),
+#                         "total_amount_recovered_overall_rs": st.column_config.NumberColumn("Total Recovered (Rs)", format="%.2f", help="Overall recovery for the DAR"),
+#                         "audit_para_number": st.column_config.NumberColumn("Para No.", format="%d", help="Para number (integer)"),
+#                         "audit_para_heading": st.column_config.TextColumn("Para Heading", width="xlarge"),
+#                         "revenue_involved_lakhs_rs": st.column_config.NumberColumn("Rev. Involved (Lakhs)", format="%.2f", help="Para-specific revenue involved in Lakhs Rs."),
+#                         "revenue_recovered_lakhs_rs": st.column_config.NumberColumn("Rev. Recovered (Lakhs)", format="%.2f", help="Para-specific revenue recovered in Lakhs Rs.")
+#                     }
+                    
+#                     editor_key = f"ag_editor_form_{selected_mcm_key}_{st.session_state.ag_current_uploaded_file_name or 'no_file_uploaded'}" # ensure unique key
+#                     edited_df = st.data_editor(
+#                         df_to_edit_ag.reindex(columns=col_order), # Ensure consistent column order
+#                         column_config=col_config, 
+#                         num_rows="dynamic", 
+#                         key=editor_key, 
+#                         use_container_width=True, 
+#                         height=400
+#                     )
 
-#                     if st.button("Validate and Submit to MCM Sheet", key=f"submit_ag_{selected_mcm_key}",
-#                                  use_container_width=True):
-#                         current_data = pd.DataFrame(edited_df);
-#                         current_data["audit_group_number"] = st.session_state.audit_group_no
-#                         val_errors = validate_data_for_sheet(current_data);
+#                     if st.button("Validate and Submit to MCM Sheet", key=f"submit_ag_data_{selected_mcm_key}", use_container_width=True): # ensure unique key
+#                         current_data_to_submit = pd.DataFrame(edited_df) # Use the output from data_editor
+#                         current_data_to_submit["audit_group_number"] = st.session_state.audit_group_no # Re-ensure audit group number
+                        
+#                         val_errors = validate_data_for_sheet(current_data_to_submit) # Assuming validate_data_for_sheet is imported
 #                         st.session_state.ag_validation_errors = val_errors
+                        
 #                         if not val_errors:
-#                             if not st.session_state.ag_pdf_drive_url:
-#                                 st.error("PDF Drive URL missing. Re-extract data.")
+#                             if not st.session_state.ag_pdf_drive_url: 
+#                                 st.error("PDF Drive URL missing. Re-extract data or ensure PDF was uploaded successfully.")
 #                             else:
 #                                 with st.spinner("Submitting to Google Sheet..."):
 #                                     rows_to_append = []
 #                                     created_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-#                                     for _, row in current_data.iterrows(): rows_to_append.append(
-#                                         [row.get(c) for c in col_order] + [st.session_state.ag_pdf_drive_url,
-#                                                                            created_date])
+#                                     for _, row_item in current_data_to_submit.iterrows(): # Renamed 'row' to 'row_item'
+#                                         rows_to_append.append([row_item.get(c_name) for c_name in col_order] + [st.session_state.ag_pdf_drive_url, created_date])
+                                    
 #                                     if rows_to_append:
-#                                         if append_to_spreadsheet(sheets_service, mcm_info['spreadsheet_id'],
-#                                                                  rows_to_append):
-#                                             st.success(
-#                                                 f"Data for '{st.session_state.ag_current_uploaded_file_name}' submitted!");
-#                                             st.balloons();
+#                                         # Assuming append_to_spreadsheet is imported
+#                                         if append_to_spreadsheet(sheets_service, mcm_info['spreadsheet_id'], rows_to_append):
+#                                             st.success(f"Data for '{st.session_state.ag_current_uploaded_file_name}' submitted!"); 
+#                                             st.balloons(); 
 #                                             time.sleep(0.5)
-#                                             st.session_state.ag_current_extracted_data = [];
-#                                             st.session_state.ag_pdf_drive_url = None;
-#                                             st.session_state.ag_editor_data = pd.DataFrame();
+#                                             # Reset session state for next upload
+#                                             st.session_state.ag_current_extracted_data = []
+#                                             st.session_state.ag_pdf_drive_url = None
+#                                             st.session_state.ag_editor_data = pd.DataFrame()
 #                                             st.session_state.ag_current_uploaded_file_name = None
-#                                             st.session_state.uploader_key_suffix = st.session_state.get(
-#                                                 'uploader_key_suffix', 0) + 1;
+#                                             st.session_state.uploader_key_suffix = st.session_state.get('uploader_key_suffix', 0) + 1
 #                                             st.rerun()
-#                                         else:
+#                                         else: 
 #                                             st.error("Failed to append to Google Sheet.")
-#                                     else:
-#                                         st.error("No data to submit after validation.")
-#                         else:
+#                                     else: 
+#                                         st.error("No data to submit after validation (rows_to_append is empty).")
+#                         else: 
 #                             st.error("Validation Failed! Correct errors below.")
+                
 #                 if st.session_state.get('ag_validation_errors'):
-#                     st.markdown("---");
+#                     st.markdown("---"); 
 #                     st.subheader("⚠️ Validation Errors:");
-#                     for err in st.session_state.ag_validation_errors: st.warning(err)
+#                     for err_msg in st.session_state.ag_validation_errors: # Renamed 'err' to 'err_msg'
+#                         st.warning(err_msg)
 
 #     elif selected_tab == "View My Uploaded DARs":
 #         st.markdown("<h3>My Uploaded DARs</h3>", unsafe_allow_html=True)
-#         if not mcm_periods:
+#         if not mcm_periods: 
 #             st.info("No MCM periods by PCO yet.")
 #         else:
-#             all_period_options = {f"{p.get('month_name')} {p.get('year')}": k for k, p in
-#                                   sorted(mcm_periods.items(), key=lambda item: item[0], reverse=True) if
-#                                   p.get('month_name') and p.get('year')}
-#             if not all_period_options and mcm_periods: st.warning(
-#                 "Some MCM periods have incomplete data (missing month/year) and are not shown as options for viewing.")
-#             if not all_period_options:
-#                 st.info("No MCM periods found.")
+#             all_period_options = {
+#                 f"{p.get('month_name')} {p.get('year')}": k 
+#                 for k,p in sorted(mcm_periods.items(),key=lambda item:item[0],reverse=True) 
+#                 if p.get('month_name') and p.get('year')
+#             }
+#             if not all_period_options and mcm_periods: 
+#                 st.warning("Some MCM periods have incomplete data and are not shown.")
+#             if not all_period_options: 
+#                 st.info("No valid MCM periods found.")
 #             else:
-#                 selected_view_period_display = st.selectbox("Select MCM Period",
-#                                                             options=list(all_period_options.keys()),
-#                                                             key="ag_view_my_dars_period")
+#                 selected_view_period_display = st.selectbox("Select MCM Period", options=list(all_period_options.keys()), key="ag_view_my_dars_period_key") # Unique key
+
 #                 if selected_view_period_display and sheets_service:
 #                     selected_view_period_key = all_period_options[selected_view_period_display]
 #                     sheet_id = mcm_periods[selected_view_period_key]['spreadsheet_id']
-#                     with st.spinner("Loading your uploads..."):
-#                         df_all = read_from_spreadsheet(sheets_service, sheet_id)
+#                     with st.spinner("Loading your uploads..."): 
+#                         df_all = read_from_spreadsheet(sheets_service, sheet_id) # Assuming read_from_spreadsheet is imported
+                    
 #                     if not df_all.empty and 'Audit Group Number' in df_all.columns:
-#                         df_all['Audit Group Number'] = df_all['Audit Group Number'].astype(str)
+#                         df_all['Audit Group Number'] = df_all['Audit Group Number'].astype(str) # Ensure consistent type for comparison
 #                         my_uploads_df = df_all[df_all['Audit Group Number'] == str(st.session_state.audit_group_no)]
+                        
 #                         if not my_uploads_df.empty:
-#                             st.markdown(f"<h4>Your Uploads for {selected_view_period_display}:</h4>",
-#                                         unsafe_allow_html=True)
+#                             st.markdown(f"<h4>Your Uploads for {selected_view_period_display}:</h4>", unsafe_allow_html=True)
 #                             df_display = my_uploads_df.copy()
-#                             if 'DAR PDF URL' in df_display.columns: df_display['DAR PDF URL'] = df_display[
-#                                 'DAR PDF URL'].apply(
-#                                 lambda x: f'<a href="{x}" target="_blank">View PDF</a>' if pd.notna(x) and str(
-#                                     x).startswith("http") else "No Link")
-#                             view_cols = ["Trade Name", "Category", "Audit Para Number", "Audit Para Heading",
-#                                          "DAR PDF URL", "Record Created Date"]
-#                             st.markdown(df_display[view_cols].to_html(escape=False, index=False),
-#                                         unsafe_allow_html=True)
-#                         else:
+#                             if 'DAR PDF URL' in df_display.columns: 
+#                                 df_display['DAR PDF URL'] = df_display['DAR PDF URL'].apply(
+#                                     lambda x: f'<a href="{x}" target="_blank">View PDF</a>' if pd.notna(x) and str(x).startswith("http") else "No Link"
+#                                 )
+#                             view_cols = ["Trade Name", "Category", "Audit Para Number", "Audit Para Heading", "DAR PDF URL", "Record Created Date"]
+#                             existing_view_cols = [col for col in view_cols if col in df_display.columns] # Filter for existing columns
+#                             st.markdown(df_display[existing_view_cols].to_html(escape=False, index=False), unsafe_allow_html=True)
+#                         else: 
 #                             st.info(f"No DARs uploaded by you for {selected_view_period_display}.")
-#                     elif df_all.empty:
+#                     elif df_all.empty: 
 #                         st.info(f"No data in MCM sheet for {selected_view_period_display}.")
-#                     else:
+#                     else: # df_all not empty but 'Audit Group Number' column missing
 #                         st.warning("Spreadsheet missing 'Audit Group Number' column.")
-#                 elif not sheets_service:
+#                 elif not sheets_service and selected_view_period_display: # If period selected but service is down
 #                     st.error("Google Sheets service not available.")
+
 
 #     elif selected_tab == "Delete My DAR Entries":
 #         st.markdown("<h3>Delete My Uploaded DAR Entries</h3>", unsafe_allow_html=True)
 #         st.info("Select MCM period to view entries. Deletion removes entry from Google Sheet; PDF on Drive remains.")
-#         if not mcm_periods:
+#         if not mcm_periods: 
 #             st.info("No MCM periods created yet.")
 #         else:
-#             all_period_options_del = {f"{p.get('month_name')} {p.get('year')}": k for k, p in
-#                                       sorted(mcm_periods.items(), key=lambda item: item[0], reverse=True) if
-#                                       p.get('month_name') and p.get('year')}
-#             if not all_period_options_del and mcm_periods: st.warning(
-#                 "Some MCM periods have incomplete data (missing month/year) and are not shown as options for deletion.")
-#             selected_del_period_display = st.selectbox("Select MCM Period", options=list(all_period_options_del.keys()),
-#                                                        key="ag_del_dars_period")
+#             all_period_options_del = {
+#                 f"{p.get('month_name')} {p.get('year')}": k 
+#                 for k, p in sorted(mcm_periods.items(),key=lambda item:item[0],reverse=True) 
+#                 if p.get('month_name') and p.get('year')
+#             }
+#             if not all_period_options_del and mcm_periods: 
+#                 st.warning("Some MCM periods have incomplete data and are not shown.")
+            
+#             selected_del_period_display = st.selectbox("Select MCM Period", options=list(all_period_options_del.keys()), key="ag_del_dars_period_key") # Unique key
+
 #             if selected_del_period_display and sheets_service:
 #                 selected_del_period_key = all_period_options_del[selected_del_period_display]
 #                 sheet_id_to_manage = mcm_periods[selected_del_period_key]['spreadsheet_id']
-#                 first_sheet_gid = 0
+#                 first_sheet_gid = 0 # Default GID
 #                 try:
 #                     meta = sheets_service.spreadsheets().get(spreadsheetId=sheet_id_to_manage).execute()
 #                     first_sheet_gid = meta.get('sheets', [{}])[0].get('properties', {}).get('sheetId', 0)
-#                 except Exception as e_gid:
+#                 except Exception as e_gid: 
 #                     st.error(f"Could not fetch sheet GID: {e_gid}")
 
-#                 with st.spinner("Loading your uploads..."):
+#                 with st.spinner("Loading your uploads..."): 
 #                     df_all_del = read_from_spreadsheet(sheets_service, sheet_id_to_manage)
+                
 #                 if not df_all_del.empty and 'Audit Group Number' in df_all_del.columns:
 #                     df_all_del['Audit Group Number'] = df_all_del['Audit Group Number'].astype(str)
-#                     my_uploads_df_del = df_all_del[
-#                         df_all_del['Audit Group Number'] == str(st.session_state.audit_group_no)].copy()
-#                     my_uploads_df_del.reset_index(inplace=True);
-#                     my_uploads_df_del.rename(columns={'index': 'original_df_index'}, inplace=True)
+#                     my_uploads_df_del = df_all_del[df_all_del['Audit Group Number'] == str(st.session_state.audit_group_no)].copy()
+#                     my_uploads_df_del.reset_index(inplace=True) # Keep original DataFrame index for internal mapping if needed later
+#                     my_uploads_df_del.rename(columns={'index': 'original_df_index'}, inplace=True) # Not strictly used here, but good practice
 
 #                     if not my_uploads_df_del.empty:
-#                         st.markdown(f"<h4>Your Uploads in {selected_del_period_display} (Select to delete):</h4>",
-#                                     unsafe_allow_html=True)
+#                         st.markdown(f"<h4>Your Uploads in {selected_del_period_display} (Select to delete):</h4>", unsafe_allow_html=True)
 #                         options_for_del = ["--Select an entry--"]
-#                         st.session_state.ag_deletable_map = {}
-#                         for idx, row in my_uploads_df_del.iterrows():
-#                             ident_str = f"Entry (TN: {str(row.get('Trade Name', 'N/A'))[:20]}..., Para: {row.get('Audit Para Number', 'N/A')}, Date: {row.get('Record Created Date', 'N/A')})"
+                        
+#                         # Initialize ag_deletable_map in session_state if not present
+#                         if 'ag_deletable_map' not in st.session_state:
+#                             st.session_state.ag_deletable_map = {}
+#                         else: # Clear map for the current selection context
+#                             st.session_state.ag_deletable_map.clear() 
+
+#                         for idx, row_data_item_del in my_uploads_df_del.iterrows(): # Renamed 'row'
+#                             ident_str = f"Entry (TN: {str(row_data_item_del.get('Trade Name', 'N/A'))[:20]}..., Para: {row_data_item_del.get('Audit Para Number', 'N/A')}, Date: {row_data_item_del.get('Record Created Date', 'N/A')})"
 #                             options_for_del.append(ident_str)
-#                             st.session_state.ag_deletable_map[ident_str] = {k: str(row.get(k)) for k in
-#                                                                             ["Trade Name", "Audit Para Number",
-#                                                                              "Record Created Date", "DAR PDF URL"]}
-#                         selected_entry_del_display = st.selectbox("Select Entry to Delete:", options_for_del,
-#                                                                   key=f"del_sel_{selected_del_period_key}")
+#                             # Store identifiable data for matching
+#                             st.session_state.ag_deletable_map[ident_str] = {
+#                                 "trade_name": str(row_data_item_del.get('Trade Name')),
+#                                 "audit_para_number": str(row_data_item_del.get('Audit Para Number')), # Compare as strings
+#                                 "record_created_date": str(row_data_item_del.get('Record Created Date')),
+#                                 "dar_pdf_url": str(row_data_item_del.get('DAR PDF URL'))
+#                             }
+                        
+#                         selected_entry_del_display = st.selectbox("Select Entry to Delete:", options_for_del, key=f"del_sel_box_{selected_del_period_key}") # Unique key
 
 #                         if selected_entry_del_display != "--Select an entry--":
 #                             row_ident_data = st.session_state.ag_deletable_map.get(selected_entry_del_display)
 #                             if row_ident_data:
-#                                 st.warning(
-#                                     f"Selected to delete: **{row_ident_data.get('trade_name')} - Para {row_ident_data.get('audit_para_number')}** (Uploaded: {row_ident_data.get('record_created_date')})")
-#                                 with st.form(key=f"del_ag_form_{selected_entry_del_display.replace(' ', '_')}"):
-#                                     ag_pass = st.text_input("Your Password:", type="password",
-#                                                             key=f"ag_pass_del_{selected_entry_del_display.replace(' ', '_')}")
+#                                 st.warning(f"Selected to delete: **{row_ident_data.get('trade_name')} - Para {row_ident_data.get('audit_para_number')}** (Uploaded: {row_ident_data.get('record_created_date')})")
+#                                 with st.form(key=f"del_ag_form_final_{selected_entry_del_display.replace(' ', '_')}"): # Unique key
+#                                     ag_pass = st.text_input("Your Password:", type="password", key=f"ag_pass_del_confirm_{selected_entry_del_display.replace(' ', '_')}") # Unique key
 #                                     submitted_del = st.form_submit_button("Confirm Deletion")
+                                    
 #                                     if submitted_del:
-#                                         if ag_pass == USER_CREDENTIALS.get(st.session_state.username):
-#                                             current_sheet_df = read_from_spreadsheet(sheets_service, sheet_id_to_manage)
+#                                         if ag_pass == USER_CREDENTIALS.get(st.session_state.username): # USER_CREDENTIALS should be imported
+#                                             current_sheet_df = read_from_spreadsheet(sheets_service, sheet_id_to_manage) # Re-fetch
 #                                             if not current_sheet_df.empty:
 #                                                 indices_to_del_sheet = []
-#                                                 for sheet_idx, sheet_row in current_sheet_df.iterrows():
-#                                                     match = all([str(sheet_row.get('Audit Group Number')) == str(
-#                                                         st.session_state.audit_group_no),
-#                                                                  str(sheet_row.get('Trade Name')) == row_ident_data.get(
-#                                                                      'trade_name'), str(sheet_row.get(
-#                                                             'Audit Para Number')) == row_ident_data.get(
-#                                                             'audit_para_number'), str(sheet_row.get(
-#                                                             'Record Created Date')) == row_ident_data.get(
-#                                                             'record_created_date'), str(sheet_row.get(
-#                                                             'DAR PDF URL')) == row_ident_data.get('dar_pdf_url')])
-#                                                     if match: indices_to_del_sheet.append(sheet_idx)
+#                                                 # Exact matching against re-fetched data
+#                                                 for sheet_idx, sheet_row_data in current_sheet_df.iterrows(): # Renamed 'sheet_row'
+#                                                     match_conditions = [
+#                                                         str(sheet_row_data.get('Audit Group Number')) == str(st.session_state.audit_group_no),
+#                                                         str(sheet_row_data.get('Trade Name')) == row_ident_data.get('trade_name'),
+#                                                         str(sheet_row_data.get('Audit Para Number')) == row_ident_data.get('audit_para_number'),
+#                                                         str(sheet_row_data.get('Record Created Date')) == row_ident_data.get('record_created_date'),
+#                                                         str(sheet_row_data.get('DAR PDF URL')) == row_ident_data.get('dar_pdf_url')
+#                                                     ]
+#                                                     if all(match_conditions): 
+#                                                         indices_to_del_sheet.append(sheet_idx) # 0-based index from read_from_spreadsheet (data part)
+                                                
 #                                                 if indices_to_del_sheet:
-#                                                     if delete_spreadsheet_rows(sheets_service, sheet_id_to_manage,
-#                                                                                first_sheet_gid, indices_to_del_sheet):
-#                                                         st.success(
-#                                                             f"Entry for '{row_ident_data.get('trade_name')}' deleted.");
-#                                                         time.sleep(0.5);
+#                                                     # Assuming delete_spreadsheet_rows is imported
+#                                                     if delete_spreadsheet_rows(sheets_service, sheet_id_to_manage, first_sheet_gid, indices_to_del_sheet):
+#                                                         st.success(f"Entry for '{row_ident_data.get('trade_name')}' deleted."); 
+#                                                         time.sleep(0.5); 
 #                                                         st.rerun()
-#                                                     else:
+#                                                     else: 
 #                                                         st.error("Failed to delete from sheet.")
-#                                                 else:
-#                                                     st.error(
-#                                                         "Could not find exact entry to delete. Might be already deleted/modified.")
-#                                             else:
-#                                                 st.error("Could not re-fetch sheet data for deletion.")
-#                                         else:
+#                                                 else: 
+#                                                     st.error("Could not find exact entry to delete. It might have been already deleted or modified.")
+#                                             else: 
+#                                                 st.error("Could not re-fetch sheet data for deletion verification.")
+#                                         else: 
 #                                             st.error("Incorrect password.")
-#                             else:
-#                                 st.error("Could not retrieve details for selected entry.")
-#                     else:
+#                             else: 
+#                                 st.error("Could not retrieve details for selected entry. Please re-select.")
+#                     else: 
 #                         st.info(f"You have no uploads in {selected_del_period_display} to delete.")
-#                 elif df_all_del.empty:
+#                 elif df_all_del.empty: 
 #                     st.info(f"No data in MCM sheet for {selected_del_period_display}.")
-#                 else:
+#                 else: # df_all_del not empty but 'Audit Group Number' column missing
 #                     st.warning("Spreadsheet missing 'Audit Group Number' column.")
-#             elif not sheets_service:
+#             elif not sheets_service and selected_del_period_display: # If period selected but service is down
 #                 st.error("Google Sheets service not available.")
-#     st.markdown("</div>", unsafe_allow_html=True)
+
+#     st.markdown("</div>", unsafe_allow_html=True)# # ui_audit_group.py
+# # import streamlit as st
+# # import datetime
+# # import time
+# # import pandas as pd
+# # from io import BytesIO
+# # from streamlit_option_menu import option_menu
+
+# # from google_utils import (
+# #     load_mcm_periods, upload_to_drive, append_to_spreadsheet,
+# #     read_from_spreadsheet, delete_spreadsheet_rows
+# # )
+# # from dar_processor import preprocess_pdf_text  # Assuming dar_processor.py provides this
+# # from gemini_utils import get_structured_data_with_gemini
+# # from validation_utils import validate_data_for_sheet, VALID_CATEGORIES
+# # from config import USER_CREDENTIALS  # For password confirmation
+
+
+# # def audit_group_dashboard(drive_service, sheets_service):
+# #     st.markdown(f"<div class='sub-header'>Audit Group {st.session_state.audit_group_no} Dashboard</div>",
+# #                 unsafe_allow_html=True)
+# #     mcm_periods = load_mcm_periods(drive_service)
+# #     active_periods = {k: v for k, v in mcm_periods.items() if v.get("active")}
+
+# #     # Fetch Gemini API Key from secrets
+# #     YOUR_GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "YOUR_API_KEY_HERE")
+
+# #     with st.sidebar:
+# #         st.image(
+# #             "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c9/Indian_Ministry_of_Finance_logo.svg/1200px-Indian_Ministry_of_Finance_logo.svg.png",
+# #             width=80)
+# #         st.markdown(f"**User:** {st.session_state.username}<br>**Group No:** {st.session_state.audit_group_no}",
+# #                     unsafe_allow_html=True)
+# #         if st.button("Logout", key="ag_logout_styled", use_container_width=True):
+# #             for key_to_del in ['ag_current_extracted_data', 'ag_pdf_drive_url', 'ag_validation_errors',
+# #                                'ag_editor_data', 'ag_current_mcm_key', 'ag_current_uploaded_file_name',
+# #                                'ag_row_to_delete_details', 'ag_show_delete_confirm', 'drive_structure_initialized']:
+# #                 if key_to_del in st.session_state: del st.session_state[key_to_del]
+# #             st.session_state.logged_in = False
+# #             st.session_state.username = ""
+# #             st.session_state.role = ""
+# #             st.session_state.audit_group_no = None
+# #             st.rerun()
+# #         st.markdown("---")
+
+# #     selected_tab = option_menu(
+# #         menu_title=None, options=["Upload DAR for MCM", "View My Uploaded DARs", "Delete My DAR Entries"],
+# #         icons=["cloud-upload-fill", "eye-fill", "trash2-fill"], menu_icon="person-workspace", default_index=0,
+# #         orientation="horizontal",
+# #         styles={
+# #             "container": {"padding": "5px !important", "background-color": "#e9ecef"},
+# #             "icon": {"color": "#28a745", "font-size": "20px"},
+# #             "nav-link": {"font-size": "16px", "text-align": "center", "margin": "0px", "--hover-color": "#d4edda"},
+# #             "nav-link-selected": {"background-color": "#28a745", "color": "white"},
+# #         })
+# #     st.markdown("<div class='card'>", unsafe_allow_html=True)
+
+# #     if selected_tab == "Upload DAR for MCM":
+# #         st.markdown("<h3>Upload DAR PDF for MCM Period</h3>", unsafe_allow_html=True)
+# #         if not active_periods:
+# #             st.warning("No active MCM periods. Contact Planning Officer.")
+# #         else:
+# #             period_options = {
+# #                 f"{p.get('month_name')} {p.get('year')}": k
+# #                 for k, p in sorted(active_periods.items(), reverse=True)
+# #                 if p.get('month_name') and p.get('year')
+# #             }
+# #             if not period_options and active_periods:
+# #                 st.warning(
+# #                     "Some active MCM periods have incomplete data (missing month/year) and are not shown as options.")
+
+# #             selected_period_display = st.selectbox("Select Active MCM Period", options=list(period_options.keys()),
+# #                                                    key="ag_select_mcm_upload")
+# #             if selected_period_display:
+# #                 selected_mcm_key = period_options[selected_period_display]
+# #                 mcm_info = mcm_periods[selected_mcm_key]
+# #                 if st.session_state.get('ag_current_mcm_key') != selected_mcm_key:
+# #                     st.session_state.ag_current_extracted_data = [];
+# #                     st.session_state.ag_pdf_drive_url = None
+# #                     st.session_state.ag_validation_errors = [];
+# #                     st.session_state.ag_editor_data = pd.DataFrame()
+# #                     st.session_state.ag_current_mcm_key = selected_mcm_key;
+# #                     st.session_state.ag_current_uploaded_file_name = None
+# #                 st.info(f"Uploading for: {mcm_info['month_name']} {mcm_info['year']}")
+# #                 uploaded_dar_file = st.file_uploader("Choose DAR PDF", type="pdf",
+# #                                                      key=f"dar_upload_ag_{selected_mcm_key}_{st.session_state.get('uploader_key_suffix', 0)}")
+
+# #                 if uploaded_dar_file:
+# #                     if st.session_state.get('ag_current_uploaded_file_name') != uploaded_dar_file.name:
+# #                         st.session_state.ag_current_extracted_data = [];
+# #                         st.session_state.ag_pdf_drive_url = None
+# #                         st.session_state.ag_validation_errors = [];
+# #                         st.session_state.ag_editor_data = pd.DataFrame()
+# #                         st.session_state.ag_current_uploaded_file_name = uploaded_dar_file.name
+
+# #                     if st.button("Extract Data from PDF", key=f"extract_ag_{selected_mcm_key}",
+# #                                  use_container_width=True):
+# #                         st.session_state.ag_validation_errors = []
+# #                         with st.spinner("Processing PDF & AI extraction..."):
+# #                             dar_pdf_bytes = uploaded_dar_file.getvalue()
+# #                             dar_filename_on_drive = f"AG{st.session_state.audit_group_no}_{uploaded_dar_file.name}"
+# #                             st.session_state.ag_pdf_drive_url = None
+# #                             pdf_drive_id, pdf_drive_url_temp = upload_to_drive(drive_service, dar_pdf_bytes,
+# #                                                                                mcm_info['drive_folder_id'],
+# #                                                                                dar_filename_on_drive)
+# #                             if not pdf_drive_id:
+# #                                 st.error("Failed to upload PDF to Drive.");
+# #                                 st.session_state.ag_editor_data = pd.DataFrame([{
+# #                                                                                     "audit_group_number": st.session_state.audit_group_no,
+# #                                                                                     "audit_para_heading": "Manual Entry - PDF Upload Failed"}])
+# #                             else:
+# #                                 st.session_state.ag_pdf_drive_url = pdf_drive_url_temp
+# #                                 st.success(f"DAR PDF on Drive: [Link]({st.session_state.ag_pdf_drive_url})")
+# #                                 preprocessed_text = preprocess_pdf_text(BytesIO(dar_pdf_bytes))
+# #                                 if preprocessed_text.startswith("Error"):
+# #                                     st.error(f"PDF Preprocessing Error: {preprocessed_text}");
+# #                                     st.session_state.ag_editor_data = pd.DataFrame([{
+# #                                                                                         "audit_group_number": st.session_state.audit_group_no,
+# #                                                                                         "audit_para_heading": "Manual Entry - PDF Error"}])
+# #                                 else:
+# #                                     parsed_report_obj = get_structured_data_with_gemini(YOUR_GEMINI_API_KEY,
+# #                                                                                         preprocessed_text)
+# #                                     temp_list = []
+# #                                     ai_failed = True
+# #                                     if parsed_report_obj.parsing_errors: st.warning(
+# #                                         f"AI Parsing Issues: {parsed_report_obj.parsing_errors}")
+# #                                     if parsed_report_obj and parsed_report_obj.header:
+# #                                         h = parsed_report_obj.header;
+# #                                         ai_failed = False
+# #                                         if parsed_report_obj.audit_paras:
+# #                                             for p in parsed_report_obj.audit_paras: temp_list.append(
+# #                                                 {"audit_group_number": st.session_state.audit_group_no,
+# #                                                  "gstin": h.gstin, "trade_name": h.trade_name, "category": h.category,
+# #                                                  "total_amount_detected_overall_rs": h.total_amount_detected_overall_rs,
+# #                                                  "total_amount_recovered_overall_rs": h.total_amount_recovered_overall_rs,
+# #                                                  "audit_para_number": p.audit_para_number,
+# #                                                  "audit_para_heading": p.audit_para_heading,
+# #                                                  "revenue_involved_lakhs_rs": p.revenue_involved_lakhs_rs,
+# #                                                  "revenue_recovered_lakhs_rs": p.revenue_recovered_lakhs_rs})
+# #                                         elif h.trade_name:
+# #                                             temp_list.append({"audit_group_number": st.session_state.audit_group_no,
+# #                                                               "gstin": h.gstin, "trade_name": h.trade_name,
+# #                                                               "category": h.category,
+# #                                                               "total_amount_detected_overall_rs": h.total_amount_detected_overall_rs,
+# #                                                               "total_amount_recovered_overall_rs": h.total_amount_recovered_overall_rs,
+# #                                                               "audit_para_heading": "N/A - Header Info Only (Add Paras Manually)"})
+# #                                         else:
+# #                                             st.error("AI failed to extract key header info."); ai_failed = True
+# #                                     if ai_failed or not temp_list:
+# #                                         st.warning("AI extraction failed or yielded no data. Please fill manually.")
+# #                                         st.session_state.ag_editor_data = pd.DataFrame([{
+# #                                                                                             "audit_group_number": st.session_state.audit_group_no,
+# #                                                                                             "audit_para_heading": "Manual Entry Required"}])
+# #                                     else:
+# #                                         st.session_state.ag_editor_data = pd.DataFrame(temp_list); st.info(
+# #                                             "Data extracted. Review & edit below.")
+
+# #                 if not isinstance(st.session_state.get('ag_editor_data'),
+# #                                   pd.DataFrame): st.session_state.ag_editor_data = pd.DataFrame()
+# #                 if uploaded_dar_file and st.session_state.ag_editor_data.empty and st.session_state.get(
+# #                         'ag_pdf_drive_url'):
+# #                     st.warning("AI couldn't extract data or none loaded. Template row provided.")
+# #                     st.session_state.ag_editor_data = pd.DataFrame(
+# #                         [{"audit_group_number": st.session_state.audit_group_no, "audit_para_heading": "Manual Entry"}])
+
+# #                 if not st.session_state.ag_editor_data.empty:
+# #                     st.markdown("<h4>Review and Edit Extracted Data:</h4>", unsafe_allow_html=True)
+# #                     df_to_edit_ag = st.session_state.ag_editor_data.copy();
+# #                     df_to_edit_ag["audit_group_number"] = st.session_state.audit_group_no
+# #                     col_order = ["audit_group_number", "gstin", "trade_name", "category",
+# #                                  "total_amount_detected_overall_rs", "total_amount_recovered_overall_rs",
+# #                                  "audit_para_number", "audit_para_heading", "revenue_involved_lakhs_rs",
+# #                                  "revenue_recovered_lakhs_rs"]
+# #                     for col in col_order:
+# #                         if col not in df_to_edit_ag.columns: df_to_edit_ag[col] = None
+# #                     col_config = {"audit_group_number": st.column_config.NumberColumn("Audit Group", disabled=True),
+# #                                   "gstin": st.column_config.TextColumn("GSTIN"),
+# #                                   "trade_name": st.column_config.TextColumn("Trade Name"),
+# #                                   "category": st.column_config.SelectboxColumn("Category", options=VALID_CATEGORIES),
+# #                                   "total_amount_detected_overall_rs": st.column_config.NumberColumn(
+# #                                       "Total Detected (Rs)", format="%.2f"),
+# #                                   "total_amount_recovered_overall_rs": st.column_config.NumberColumn(
+# #                                       "Total Recovered (Rs)", format="%.2f"),
+# #                                   "audit_para_number": st.column_config.NumberColumn("Para No.", format="%d"),
+# #                                   "audit_para_heading": st.column_config.TextColumn("Para Heading", width="xlarge"),
+# #                                   "revenue_involved_lakhs_rs": st.column_config.NumberColumn("Rev. Involved (Lakhs)",
+# #                                                                                              format="%.2f"),
+# #                                   "revenue_recovered_lakhs_rs": st.column_config.NumberColumn("Rev. Recovered (Lakhs)",
+# #                                                                                               format="%.2f")}
+# #                     editor_key = f"ag_editor_{selected_mcm_key}_{st.session_state.ag_current_uploaded_file_name or 'no_file'}"
+# #                     edited_df = st.data_editor(df_to_edit_ag.reindex(columns=col_order), column_config=col_config,
+# #                                                num_rows="dynamic", key=editor_key, use_container_width=True, height=400)
+
+# #                     if st.button("Validate and Submit to MCM Sheet", key=f"submit_ag_{selected_mcm_key}",
+# #                                  use_container_width=True):
+# #                         current_data = pd.DataFrame(edited_df);
+# #                         current_data["audit_group_number"] = st.session_state.audit_group_no
+# #                         val_errors = validate_data_for_sheet(current_data);
+# #                         st.session_state.ag_validation_errors = val_errors
+# #                         if not val_errors:
+# #                             if not st.session_state.ag_pdf_drive_url:
+# #                                 st.error("PDF Drive URL missing. Re-extract data.")
+# #                             else:
+# #                                 with st.spinner("Submitting to Google Sheet..."):
+# #                                     rows_to_append = []
+# #                                     created_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+# #                                     for _, row in current_data.iterrows(): rows_to_append.append(
+# #                                         [row.get(c) for c in col_order] + [st.session_state.ag_pdf_drive_url,
+# #                                                                            created_date])
+# #                                     if rows_to_append:
+# #                                         if append_to_spreadsheet(sheets_service, mcm_info['spreadsheet_id'],
+# #                                                                  rows_to_append):
+# #                                             st.success(
+# #                                                 f"Data for '{st.session_state.ag_current_uploaded_file_name}' submitted!");
+# #                                             st.balloons();
+# #                                             time.sleep(0.5)
+# #                                             st.session_state.ag_current_extracted_data = [];
+# #                                             st.session_state.ag_pdf_drive_url = None;
+# #                                             st.session_state.ag_editor_data = pd.DataFrame();
+# #                                             st.session_state.ag_current_uploaded_file_name = None
+# #                                             st.session_state.uploader_key_suffix = st.session_state.get(
+# #                                                 'uploader_key_suffix', 0) + 1;
+# #                                             st.rerun()
+# #                                         else:
+# #                                             st.error("Failed to append to Google Sheet.")
+# #                                     else:
+# #                                         st.error("No data to submit after validation.")
+# #                         else:
+# #                             st.error("Validation Failed! Correct errors below.")
+# #                 if st.session_state.get('ag_validation_errors'):
+# #                     st.markdown("---");
+# #                     st.subheader("⚠️ Validation Errors:");
+# #                     for err in st.session_state.ag_validation_errors: st.warning(err)
+
+# #     elif selected_tab == "View My Uploaded DARs":
+# #         st.markdown("<h3>My Uploaded DARs</h3>", unsafe_allow_html=True)
+# #         if not mcm_periods:
+# #             st.info("No MCM periods by PCO yet.")
+# #         else:
+# #             all_period_options = {f"{p.get('month_name')} {p.get('year')}": k for k, p in
+# #                                   sorted(mcm_periods.items(), key=lambda item: item[0], reverse=True) if
+# #                                   p.get('month_name') and p.get('year')}
+# #             if not all_period_options and mcm_periods: st.warning(
+# #                 "Some MCM periods have incomplete data (missing month/year) and are not shown as options for viewing.")
+# #             if not all_period_options:
+# #                 st.info("No MCM periods found.")
+# #             else:
+# #                 selected_view_period_display = st.selectbox("Select MCM Period",
+# #                                                             options=list(all_period_options.keys()),
+# #                                                             key="ag_view_my_dars_period")
+# #                 if selected_view_period_display and sheets_service:
+# #                     selected_view_period_key = all_period_options[selected_view_period_display]
+# #                     sheet_id = mcm_periods[selected_view_period_key]['spreadsheet_id']
+# #                     with st.spinner("Loading your uploads..."):
+# #                         df_all = read_from_spreadsheet(sheets_service, sheet_id)
+# #                     if not df_all.empty and 'Audit Group Number' in df_all.columns:
+# #                         df_all['Audit Group Number'] = df_all['Audit Group Number'].astype(str)
+# #                         my_uploads_df = df_all[df_all['Audit Group Number'] == str(st.session_state.audit_group_no)]
+# #                         if not my_uploads_df.empty:
+# #                             st.markdown(f"<h4>Your Uploads for {selected_view_period_display}:</h4>",
+# #                                         unsafe_allow_html=True)
+# #                             df_display = my_uploads_df.copy()
+# #                             if 'DAR PDF URL' in df_display.columns: df_display['DAR PDF URL'] = df_display[
+# #                                 'DAR PDF URL'].apply(
+# #                                 lambda x: f'<a href="{x}" target="_blank">View PDF</a>' if pd.notna(x) and str(
+# #                                     x).startswith("http") else "No Link")
+# #                             view_cols = ["Trade Name", "Category", "Audit Para Number", "Audit Para Heading",
+# #                                          "DAR PDF URL", "Record Created Date"]
+# #                             st.markdown(df_display[view_cols].to_html(escape=False, index=False),
+# #                                         unsafe_allow_html=True)
+# #                         else:
+# #                             st.info(f"No DARs uploaded by you for {selected_view_period_display}.")
+# #                     elif df_all.empty:
+# #                         st.info(f"No data in MCM sheet for {selected_view_period_display}.")
+# #                     else:
+# #                         st.warning("Spreadsheet missing 'Audit Group Number' column.")
+# #                 elif not sheets_service:
+# #                     st.error("Google Sheets service not available.")
+
+# #     elif selected_tab == "Delete My DAR Entries":
+# #         st.markdown("<h3>Delete My Uploaded DAR Entries</h3>", unsafe_allow_html=True)
+# #         st.info("Select MCM period to view entries. Deletion removes entry from Google Sheet; PDF on Drive remains.")
+# #         if not mcm_periods:
+# #             st.info("No MCM periods created yet.")
+# #         else:
+# #             all_period_options_del = {f"{p.get('month_name')} {p.get('year')}": k for k, p in
+# #                                       sorted(mcm_periods.items(), key=lambda item: item[0], reverse=True) if
+# #                                       p.get('month_name') and p.get('year')}
+# #             if not all_period_options_del and mcm_periods: st.warning(
+# #                 "Some MCM periods have incomplete data (missing month/year) and are not shown as options for deletion.")
+# #             selected_del_period_display = st.selectbox("Select MCM Period", options=list(all_period_options_del.keys()),
+# #                                                        key="ag_del_dars_period")
+# #             if selected_del_period_display and sheets_service:
+# #                 selected_del_period_key = all_period_options_del[selected_del_period_display]
+# #                 sheet_id_to_manage = mcm_periods[selected_del_period_key]['spreadsheet_id']
+# #                 first_sheet_gid = 0
+# #                 try:
+# #                     meta = sheets_service.spreadsheets().get(spreadsheetId=sheet_id_to_manage).execute()
+# #                     first_sheet_gid = meta.get('sheets', [{}])[0].get('properties', {}).get('sheetId', 0)
+# #                 except Exception as e_gid:
+# #                     st.error(f"Could not fetch sheet GID: {e_gid}")
+
+# #                 with st.spinner("Loading your uploads..."):
+# #                     df_all_del = read_from_spreadsheet(sheets_service, sheet_id_to_manage)
+# #                 if not df_all_del.empty and 'Audit Group Number' in df_all_del.columns:
+# #                     df_all_del['Audit Group Number'] = df_all_del['Audit Group Number'].astype(str)
+# #                     my_uploads_df_del = df_all_del[
+# #                         df_all_del['Audit Group Number'] == str(st.session_state.audit_group_no)].copy()
+# #                     my_uploads_df_del.reset_index(inplace=True);
+# #                     my_uploads_df_del.rename(columns={'index': 'original_df_index'}, inplace=True)
+
+# #                     if not my_uploads_df_del.empty:
+# #                         st.markdown(f"<h4>Your Uploads in {selected_del_period_display} (Select to delete):</h4>",
+# #                                     unsafe_allow_html=True)
+# #                         options_for_del = ["--Select an entry--"]
+# #                         st.session_state.ag_deletable_map = {}
+# #                         for idx, row in my_uploads_df_del.iterrows():
+# #                             ident_str = f"Entry (TN: {str(row.get('Trade Name', 'N/A'))[:20]}..., Para: {row.get('Audit Para Number', 'N/A')}, Date: {row.get('Record Created Date', 'N/A')})"
+# #                             options_for_del.append(ident_str)
+# #                             st.session_state.ag_deletable_map[ident_str] = {k: str(row.get(k)) for k in
+# #                                                                             ["Trade Name", "Audit Para Number",
+# #                                                                              "Record Created Date", "DAR PDF URL"]}
+# #                         selected_entry_del_display = st.selectbox("Select Entry to Delete:", options_for_del,
+# #                                                                   key=f"del_sel_{selected_del_period_key}")
+
+# #                         if selected_entry_del_display != "--Select an entry--":
+# #                             row_ident_data = st.session_state.ag_deletable_map.get(selected_entry_del_display)
+# #                             if row_ident_data:
+# #                                 st.warning(
+# #                                     f"Selected to delete: **{row_ident_data.get('trade_name')} - Para {row_ident_data.get('audit_para_number')}** (Uploaded: {row_ident_data.get('record_created_date')})")
+# #                                 with st.form(key=f"del_ag_form_{selected_entry_del_display.replace(' ', '_')}"):
+# #                                     ag_pass = st.text_input("Your Password:", type="password",
+# #                                                             key=f"ag_pass_del_{selected_entry_del_display.replace(' ', '_')}")
+# #                                     submitted_del = st.form_submit_button("Confirm Deletion")
+# #                                     if submitted_del:
+# #                                         if ag_pass == USER_CREDENTIALS.get(st.session_state.username):
+# #                                             current_sheet_df = read_from_spreadsheet(sheets_service, sheet_id_to_manage)
+# #                                             if not current_sheet_df.empty:
+# #                                                 indices_to_del_sheet = []
+# #                                                 for sheet_idx, sheet_row in current_sheet_df.iterrows():
+# #                                                     match = all([str(sheet_row.get('Audit Group Number')) == str(
+# #                                                         st.session_state.audit_group_no),
+# #                                                                  str(sheet_row.get('Trade Name')) == row_ident_data.get(
+# #                                                                      'trade_name'), str(sheet_row.get(
+# #                                                             'Audit Para Number')) == row_ident_data.get(
+# #                                                             'audit_para_number'), str(sheet_row.get(
+# #                                                             'Record Created Date')) == row_ident_data.get(
+# #                                                             'record_created_date'), str(sheet_row.get(
+# #                                                             'DAR PDF URL')) == row_ident_data.get('dar_pdf_url')])
+# #                                                     if match: indices_to_del_sheet.append(sheet_idx)
+# #                                                 if indices_to_del_sheet:
+# #                                                     if delete_spreadsheet_rows(sheets_service, sheet_id_to_manage,
+# #                                                                                first_sheet_gid, indices_to_del_sheet):
+# #                                                         st.success(
+# #                                                             f"Entry for '{row_ident_data.get('trade_name')}' deleted.");
+# #                                                         time.sleep(0.5);
+# #                                                         st.rerun()
+# #                                                     else:
+# #                                                         st.error("Failed to delete from sheet.")
+# #                                                 else:
+# #                                                     st.error(
+# #                                                         "Could not find exact entry to delete. Might be already deleted/modified.")
+# #                                             else:
+# #                                                 st.error("Could not re-fetch sheet data for deletion.")
+# #                                         else:
+# #                                             st.error("Incorrect password.")
+# #                             else:
+# #                                 st.error("Could not retrieve details for selected entry.")
+# #                     else:
+# #                         st.info(f"You have no uploads in {selected_del_period_display} to delete.")
+# #                 elif df_all_del.empty:
+# #                     st.info(f"No data in MCM sheet for {selected_del_period_display}.")
+# #                 else:
+# #                     st.warning("Spreadsheet missing 'Audit Group Number' column.")
+# #             elif not sheets_service:
+# #                 st.error("Google Sheets service not available.")
+# #     st.markdown("</div>", unsafe_allow_html=True)
