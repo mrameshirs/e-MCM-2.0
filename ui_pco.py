@@ -195,8 +195,8 @@ def pco_dashboard(drive_service, sheets_service):
                                 except Exception as e_rep_sum: st.error(f"Error processing summary: {e_rep_sum}"); st.dataframe(df_report_data, use_container_width=True)
                             else: st.warning("Missing 'Audit Group Number' column for summary."); st.dataframe(df_report_data, use_container_width=True)
                         elif df_report_data is None: st.error("Could not load data from the spreadsheet.")
-                        else: st.info(f"No data in spreadsheet for {selected_period_str_view}.")
-                    elif not sheets_service and selected_period_k_for_view: st.error("Google Sheets service not available.")
+                    else: st.info(f"No data in spreadsheet for {selected_period_str_view}.")
+                elif not sheets_service and selected_period_k_for_view: st.error("Google Sheets service not available.")
 
     # ========================== VISUALIZATIONS TAB ==========================
     elif selected_tab == "Visualizations":
