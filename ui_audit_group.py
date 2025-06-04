@@ -18,7 +18,12 @@ from config import USER_CREDENTIALS, AUDIT_GROUP_NUMBERS
 from models import ParsedDARReport
 
 from streamlit_option_menu import option_menu
-
+SHEET_DATA_COLUMNS_ORDER = [
+    "audit_group_number", "audit_circle_number", "gstin", "trade_name", "category",
+    "total_amount_detected_overall_rs", "total_amount_recovered_overall_rs",
+    "audit_para_number", "audit_para_heading",
+    "revenue_involved_lakhs_rs", "revenue_recovered_lakhs_rs", "status_of_para",
+]
 # --- Caching helper for MCM Periods ---
 def get_cached_mcm_periods_ag(drive_service, ttl_seconds=120):
     cache_key_data = 'ag_ui_cached_mcm_periods_data'
