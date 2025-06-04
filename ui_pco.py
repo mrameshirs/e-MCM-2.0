@@ -324,10 +324,9 @@ def pco_dashboard(drive_service, sheets_service):
                                 if not viz_top_rec_paras.empty: st.write(f"**Top {viz_num_paras_show} Realisation Paras (by Revenue Recovered):**"); viz_disp_cols_rec = ['Audit Group Number Str', 'Trade Name', 'Audit Para Number', 'Audit Para Heading', 'Revenue Recovered (Lakhs Rs)', 'Status of para']; viz_existing_cols_rec = [c for c in viz_disp_cols_rec if c in viz_top_rec_paras.columns]; st.dataframe(viz_top_rec_paras[viz_existing_cols_rec].rename(columns={'Audit Group Number Str': 'Audit Group'}), use_container_width=True)
                                 else: st.info("No data for 'Top Realisation Paras' list.")
                         elif df_viz_data is None: st.error("Error reading data from spreadsheet for visualization.")
-                        else: st.info(f"No data in spreadsheet for {selected_viz_period_display_str} to visualize.")
-                    elif not sheets_service and selected_viz_period_key_str: st.error("Google Sheets service unavailable when trying to load visualization data.")
-                elif not sheets_service and selected_viz_period_display_str: st.error("Google Sheets service is not available.")
-        elif not viz_options_list and all_mcm_periods_for_viz_tab: 
-                st.warning("No MCM periods with complete month/year found for viz options.")
+                    else: st.info(f"No data in spreadsheet for {selected_viz_period_display_str} to visualize.")
+                elif not sheets_service and selected_viz_period_key_str: st.error("Google Sheets service unavailable when trying to load visualization data.")
+            elif not sheets_service and selected_viz_period_display_str: st.error("Google Sheets service is not available.")
+        elif not viz_options_list and all_mcm_periods_for_viz_tab: st.warning("No MCM periods with complete month/year found for viz options.")
 
     st.markdown("</div>", unsafe_allow_html=True)# # ui_pco.py
