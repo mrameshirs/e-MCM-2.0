@@ -327,7 +327,7 @@ def pco_dashboard(drive_service, sheets_service):
                         else: st.info(f"No data in spreadsheet for {selected_viz_period_display_str} to visualize.")
                     elif not sheets_service and selected_viz_period_key_str: st.error("Google Sheets service unavailable when trying to load visualization data.")
                 elif not sheets_service and selected_viz_period_display_str: st.error("Google Sheets service is not available.")
-            elif not viz_options_list and all_mcm_periods_for_viz_tab: 
+        elif not viz_options_list and all_mcm_periods_for_viz_tab: 
                 st.warning("No MCM periods with complete month/year found for viz options.")
 
     st.markdown("</div>", unsafe_allow_html=True)# # ui_pco.py
