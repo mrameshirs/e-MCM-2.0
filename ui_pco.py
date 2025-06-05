@@ -7,6 +7,9 @@ import plotly.express as px
 from streamlit_option_menu import option_menu
 import math  # For math.ceil if needed
 
+from ui_mcm_agenda import mcm_agenda_tab # <--- IMPORT THE NEW TAB FUNCTION
+
+
 # Assuming google_utils.py and config.py are in the same directory and correctly set up
 from google_utils import (
     load_mcm_periods, save_mcm_periods, create_drive_folder,
@@ -230,7 +233,9 @@ def pco_dashboard(drive_service, sheets_service):
                             st.info(f"No data in spreadsheet for {selected_period_str_view}.")
                     elif not sheets_service and selected_period_k_for_view:
                         st.error("Google Sheets service not available.")
-
+    elif selected_tab == "MCM Agenda":
+        mcm_agenda_tab(drive_service, sheets_service, mcm_periods) # Call the imported function
+    
     # ========================== VISUALIZATIONS TAB ==========================
     elif selected_tab == "Visualizations":
         st.markdown("<h3>Data Visualizations</h3>", unsafe_allow_html=True)
