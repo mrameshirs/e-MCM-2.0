@@ -10,3 +10,5 @@ streamlit-option-menu
 pdfplumber
 pydantic
 typing
+reportlab
+PyPDF2
