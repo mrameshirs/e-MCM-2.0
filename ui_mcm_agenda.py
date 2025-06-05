@@ -6,7 +6,7 @@ import math
 from io import BytesIO
 import requests 
 from urllib.parse import urlparse, parse_qs
-
+import html 
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -152,6 +152,7 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
 
         # Vertical collapsible tabs for Audit Circles
         for circle_num_iter in range(1, 11):
+            ##
             circle_label_iter = f"Audit Circle {circle_num_iter}"
             df_circle_iter_data = df_period_data_full[df_period_data_full[circle_col_to_use] == circle_num_iter]
 
@@ -175,16 +176,15 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                         group_dfs_list.append(df_grp_iter_data)
                 
                 if not group_labels_list:
-                    st.write(f"No audit group data found for {circle_label_iter}.")
+                    st.write(f"No specific audit group data found within {circle_label_iter}.")
                     continue
                 
-                group_st_tabs = st.tabs(group_labels_list)
-                for i, group_tab_widget_item in enumerate(group_st_tabs):
+                group_st_tabs_widgets = st.tabs(group_labels_list)
+
+                for i, group_tab_widget_item in enumerate(group_st_tabs_widgets):
                     with group_tab_widget_item:
                         df_current_grp_item = group_dfs_list[i]
-                        # Ensure 'Trade Name' column exists, fillna just in case
                         unique_trade_names_list = df_current_grp_item.get('Trade Name', pd.Series(dtype='str')).dropna().unique()
-
 
                         if not unique_trade_names_list.any():
                             st.write("No trade names with DARs found for this group.")
@@ -201,40 +201,49 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
 
                             cols_trade_display = st.columns([0.7, 0.3])
                             with cols_trade_display[0]:
-                                if st.button(f"{trade_name_item}", key=f"tradebtn_{circle_num_iter}_{i}_{tn_idx_iter}", help=f"Show paras for {trade_name_item}", use_container_width=True):
+                                if st.button(f"{trade_name_item}", key=f"tradebtn_agenda_{circle_num_iter}_{i}_{tn_idx_iter}", help=f"Show paras for {trade_name_item}", use_container_width=True):
                                     st.session_state[session_key_selected_trade] = trade_name_item
                             with cols_trade_display[1]:
                                 if pd.notna(dar_pdf_url_item) and isinstance(dar_pdf_url_item, str) and dar_pdf_url_item.startswith("http"):
-                                    st.link_button("View DAR PDF", dar_pdf_url_item, use_container_width=True)
+                                    st.link_button("View DAR PDF", dar_pdf_url_item, use_container_width=True, type="secondary")
                                 else:
                                     st.caption("No PDF Link")
                             
                             if st.session_state.get(session_key_selected_trade) == trade_name_item:
-                                st.markdown(f"<h5 style='font-size:13pt; margin-top:10px; color:#154360;'>Gist of Audit Paras for: {trade_name_item}</h5>", unsafe_allow_html=True)
+                                st.markdown(f"<h5 style='font-size:13pt; margin-top:10px; color:#154360;'>Gist of Audit Paras for: {html.escape(trade_name_item)}</h5>", unsafe_allow_html=True)
                                 df_trade_paras_item = df_current_grp_item[df_current_grp_item['Trade Name'] == trade_name_item]
                                 
                                 html_rows = ""
                                 total_det_tn_item = 0; total_rec_tn_item = 0
                                 for _, para_item_row in df_trade_paras_item.iterrows():
-                                    p_num = para_item_row.get("Audit Para Number", "N/A"); p_num_str = str(int(p_num)) if pd.notna(p_num) else "N/A"
-                                    p_title = st.runtime.scriptrunner.script_run_context.escape_html(str(para_item_row.get("Audit Para Heading", "N/A")))
-                                    p_status = st.runtime.scriptrunner.script_run_context.escape_html(str(para_item_row.get("Status of para", "N/A")))
+                                    para_num = para_item_row.get("Audit Para Number", "N/A"); p_num_str = str(int(para_num)) if pd.notna(para_num) else "N/A"
+                                    # Use html.escape() for user-generated content
+                                    p_title = html.escape(str(para_item_row.get("Audit Para Heading", "N/A")))
+                                    p_status = html.escape(str(para_item_row.get("Status of para", "N/A")))
                                     
                                     det_lakhs = para_item_row.get('Revenue Involved (Lakhs Rs)', 0); det_rs = (det_lakhs * 100000) if pd.notna(det_lakhs) else 0
                                     rec_lakhs = para_item_row.get('Revenue Recovered (Lakhs Rs)', 0); rec_rs = (rec_lakhs * 100000) if pd.notna(rec_lakhs) else 0
                                     total_det_tn_item += det_rs; total_rec_tn_item += rec_rs
                                     
-                                    html_rows += f"<tr><td>{p_num_str}</td><td>{p_title}</td><td class='amount-col'>{det_rs:,.0f}</td><td class='amount-col'>{rec_rs:,.0f}</td><td>{p_status}</td></tr>"
+                                    html_rows += f"""
+                                    <tr>
+                                        <td>{p_num_str}</td>
+                                        <td>{p_title}</td>
+                                        <td class='amount-col'>{det_rs:,.0f}</td>
+                                        <td class='amount-col'>{rec_rs:,.0f}</td>
+                                        <td>{p_status}</td>
+                                    </tr>"""
                                 
                                 table_full_html = f"""
                                 <style>.paras-table {{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:10pt;}}.paras-table th, .paras-table td {{border:1px solid #bbb;padding:5px;text-align:left;word-wrap:break-word;}}.paras-table th {{background-color:#343a40;color:white;font-size:11pt;}}.paras-table tr:nth-child(even) {{background-color:#f4f6f6;}}.amount-col {{text-align:right!important;}}</style>
                                 <table class='paras-table'><tr><th>Para No.</th><th>Para Title</th><th>Detection (Rs)</th><th>Recovery (Rs)</th><th>Status</th></tr>{html_rows}</table>"""
                                 st.markdown(table_full_html, unsafe_allow_html=True)
-                                st.markdown(f"<b>Total Detection for {trade_name_item}: Rs. {total_det_tn_item:,.0f}</b>", unsafe_allow_html=True)
-                                st.markdown(f"<b>Total Recovery for {trade_name_item}: Rs. {total_rec_tn_item:,.0f}</b>", unsafe_allow_html=True)
+                                st.markdown(f"<b>Total Detection for {html.escape(trade_name_item)}: Rs. {total_det_tn_item:,.0f}</b>", unsafe_allow_html=True)
+                                st.markdown(f"<b>Total Recovery for {html.escape(trade_name_item)}: Rs. {total_rec_tn_item:,.0f}</b>", unsafe_allow_html=True)
                                 st.markdown("<hr style='border-top: 1px solid #ccc; margin-top:10px; margin-bottom:10px;'>", unsafe_allow_html=True)
         
         st.markdown("---")
+           
         if st.button("Compile Full MCM Agenda PDF", key="compile_mcm_agenda_pdf_final_btn", type="primary", help="Generates a comprehensive PDF including cover, index, high-value paras, and all linked DARs.", use_container_width=True):
             if df_period_data_full.empty:
                 st.error("No data available for the selected MCM period to compile into PDF.")
