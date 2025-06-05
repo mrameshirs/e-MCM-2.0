@@ -533,7 +533,7 @@ if st.button("Compile Full MCM Agenda PDF", key="compile_mcm_agenda_pdf_final_v4
         #             status_message_area.empty()
         #             progress_bar.empty()
 
-#     st.markdown("</div>", unsafe_allow_html=True)# # ui_mcm_agenda.py
+st.markdown("</div>", unsafe_allow_html=True)# # ui_mcm_agenda.py
 # # import streamlit as st
 # # import pandas as pd
 # # import datetime
