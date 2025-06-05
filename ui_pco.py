@@ -42,17 +42,24 @@ def pco_dashboard(drive_service, sheets_service):
             st.rerun()
         st.markdown("---")
 
-    selected_tab = option_menu(
+     selected_tab = option_menu(
         menu_title=None,
-        options=["Create MCM Period", "Manage MCM Periods", "View Uploaded Reports", "Visualizations"],
-        icons=["calendar-plus-fill", "sliders", "eye-fill", "bar-chart-fill"],
-        menu_icon="gear-wide-connected", default_index=0, orientation="horizontal",
+        options=["Create MCM Period", "Manage MCM Periods", "View Uploaded Reports", 
+                 "MCM Agenda", # <--- ADDED "MCM Agenda"
+                 "Visualizations"],
+        icons=["calendar-plus-fill", "sliders", "eye-fill", 
+               "journal-richtext", # <--- ADDED ICON for MCM Agenda (Example icon)
+               "bar-chart-fill"],
+        menu_icon="gear-wide-connected", 
+        default_index=0, # You might want to adjust this if MCM Agenda should be default
+        orientation="horizontal",
         styles={
             "container": {"padding": "5px !important", "background-color": "#e9ecef"},
             "icon": {"color": "#007bff", "font-size": "20px"},
             "nav-link": {"font-size": "16px", "text-align": "center", "margin": "0px", "--hover-color": "#d1e7fd"},
             "nav-link-selected": {"background-color": "#007bff", "color": "white"},
         })
+
 
     st.markdown("<div class='card'>", unsafe_allow_html=True)
 
