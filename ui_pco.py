@@ -41,8 +41,7 @@ def pco_dashboard(drive_service, sheets_service):
                     del st.session_state[key]
             st.rerun()
         st.markdown("---")
-
-     selected_tab = option_menu(
+    selected_tab = option_menu(
         menu_title=None,
         options=["Create MCM Period", "Manage MCM Periods", "View Uploaded Reports", 
                  "MCM Agenda", # <--- ADDED "MCM Agenda"
@@ -60,6 +59,8 @@ def pco_dashboard(drive_service, sheets_service):
             "nav-link-selected": {"background-color": "#007bff", "color": "white"},
         })
 
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+  
 
     st.markdown("<div class='card'>", unsafe_allow_html=True)
 
