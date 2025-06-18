@@ -1,6 +1,8 @@
 # app.py (Refactored)
 import streamlit as st
 import pandas as pd
+st.set_page_config(layout="wide", page_title="e-MCM App - GST Audit 1")
+
 # --- Custom Module Imports ---
 from config import MASTER_DRIVE_FOLDER_NAME # Example of using config
 from css_styles import load_custom_css
@@ -10,7 +12,7 @@ from ui_pco import pco_dashboard
 from ui_audit_group import audit_group_dashboard
 
 # --- Streamlit Page Configuration ---
-st.set_page_config(layout="wide", page_title="e-MCM App - GST Audit 1")
+#st.set_page_config(layout="wide", page_title="e-MCM App - GST Audit 1")
 load_custom_css()
 
 # --- Session State Initialization ---
