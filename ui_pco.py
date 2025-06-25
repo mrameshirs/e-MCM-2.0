@@ -287,7 +287,7 @@ def pco_dashboard(drive_service, sheets_service):
                             df_viz_data['Category'] = df_viz_data.get('Category', pd.Series(dtype='str')).fillna('Unknown')
                             df_viz_data['Trade Name'] = df_viz_data.get('Trade Name', pd.Series(dtype='str')).fillna('Unknown Trade Name')
                             df_viz_data['Status of para'] = df_viz_data.get('Status of para', pd.Series(dtype='str')).fillna('Unknown')
-
+                            st.write("Debug: Columns in df_viz_data:", df_viz_data.columns.tolist())
                             # --- Para Status Distribution ---
                             st.markdown("---")
                             st.markdown("<h4>Para Status Distribution</h4>", unsafe_allow_html=True)
