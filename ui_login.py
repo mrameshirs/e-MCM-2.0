@@ -5,6 +5,19 @@ import base64
 from config import USER_CREDENTIALS, USER_ROLES, AUDIT_GROUP_NUMBERS
 
 def login_page():
+    #st.markdown("<div class='page-main-title'>e-MCM App</div>", unsafe_allow_html=True)
+    # Define the CSS style
+    st.markdown("""
+    <style>
+    .page-main-title {
+        font-size: 3rem; /* Adjust the font size as needed */
+        font-weight: bold;
+        text-align: center;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Render the title
     st.markdown("<div class='page-main-title'>e-MCM App</div>", unsafe_allow_html=True)
     st.markdown("<h2 class='page-app-subtitle'>GST Audit 1 Commissionerate</h2>", unsafe_allow_html=True)
 
