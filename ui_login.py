@@ -43,7 +43,7 @@ def login_page():
         st.markdown("<div class='login-header' style='color: red; font-weight: bold;'>[Logo Not Found]</div>",
                     unsafe_allow_html=True)
 
-    st.markdown("<h4 class='login-header-text'>User Login</h4>", unsafe_allow_html=True)
+    st.markdown("<h6 class='login-header-text'>User Login</h6>", unsafe_allow_html=True)
     st.markdown("""
     <div class='app-description'>
         Welcome! This platform streamlines Draft Audit Report (DAR) collection and processing.
