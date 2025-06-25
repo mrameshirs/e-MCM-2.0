@@ -275,6 +275,13 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                     
                     # Get unique DARs, sorted for consistent processing order
                     unique_dars_to_process = df_for_pdf.sort_values(by=[circle_col_to_use, 'Trade Name', 'DAR PDF URL']).drop_duplicates(subset=['DAR PDF URL'])
+                    # ===================================================================
+                    # --- TEST CODE: Limit to 3 DARs for faster testing ---
+                    st.info("ℹ️ TEST MODE: Compiling only the first 3 DARs found.")
+                    unique_dars_to_process = unique_dars_to_process.head(3)
+                    # --- END TEST CODE ---
+                    # ===================================================================
+                    
                     total_dars = len(unique_dars_to_process)
                     
                     dar_objects_for_merge_and_index = [] 
@@ -284,7 +291,8 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                         progress_bar.empty()
                         st.stop()
         
-                    total_steps_for_pdf = 4 + total_dars  # Cover, High-Value, Index, each DAR, Finalize
+                    #total_steps_for_pdf = 4 + total_dars  # Cover, High-Value, Index, each DAR, Finalize
+                    total_steps_for_pdf = 4 + (2 * total_dars)
                     current_pdf_step = 0
         
                     # Step 1: Pre-fetch DAR PDFs to count pages
