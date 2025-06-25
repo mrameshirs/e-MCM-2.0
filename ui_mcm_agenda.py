@@ -258,161 +258,161 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
         st.markdown("---")
         # # --- Compile PDF Button ---
         # Inside mcm_agenda_tab function, replace the PDF compilation block (after the button) with this:
-if st.button("Compile Full MCM Agenda PDF", key="compile_mcm_agenda_pdf_final_v4_progress", type="primary", help="Generates a comprehensive PDF.", use_container_width=True):
-    if df_period_data_full.empty:
-        st.error("No data available for the selected MCM period to compile into PDF.")
-    else:
-        status_message_area = st.empty() 
-        progress_bar = st.progress(0)
-        
-        with st.spinner("Preparing for PDF compilation..."):
-            final_pdf_merger = PdfWriter()
-            compiled_pdf_pages_count = 0 
-
-            # Filter and sort data for PDF
-            df_for_pdf = df_period_data_full.dropna(subset=['DAR PDF URL', 'Trade Name', circle_col_to_use]).copy()
-            df_for_pdf[circle_col_to_use] = pd.to_numeric(df_for_pdf[circle_col_to_use], errors='coerce').fillna(0).astype(int)
-            
-            # Get unique DARs, sorted for consistent processing order
-            unique_dars_to_process = df_for_pdf.sort_values(by=[circle_col_to_use, 'Trade Name', 'DAR PDF URL']).drop_duplicates(subset=['DAR PDF URL'])
-            total_dars = len(unique_dars_to_process)
-            
-            dar_objects_for_merge_and_index = [] 
-            
-            if total_dars == 0:
-                status_message_area.warning("No valid DARs with PDF URLs found to compile.")
-                progress_bar.empty()
-                st.stop()
-
-            total_steps_for_pdf = 4 + total_dars  # Cover, High-Value, Index, each DAR, Finalize
-            current_pdf_step = 0
-
-            # Step 1: Pre-fetch DAR PDFs to count pages
-            if drive_service:
-                status_message_area.info(f"Pre-fetching {total_dars} DAR PDFs to count pages and prepare content...")
-                for idx, dar_row in unique_dars_to_process.iterrows():
-                    current_pdf_step += 1
-                    dar_url_val = dar_row.get('DAR PDF URL')
-                    file_id_val = get_file_id_from_drive_url(dar_url_val)
-                    num_pages_val = 1  # Default in case of fetch failure
-                    reader_obj_val = None
-                    trade_name_val = dar_row.get('Trade Name', 'Unknown DAR')
-                    circle_val = f"Circle {int(dar_row.get(circle_col_to_use, 0))}"
-
-                    status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Fetching DAR {idx+1}/{total_dars} for {trade_name_val}...")
-                    if file_id_val:
-                        try:
-                            req_val = drive_service.files().get_media(fileId=file_id_val)
-                            fh_val = BytesIO()
-                            downloader = MediaIoBaseDownload(fh_val, req_val)
-                            done = False
-                            while not done:
-                                status, done = downloader.next_chunk(num_retries=2)
-                            fh_val.seek(0)
-                            reader_obj_val = PdfReader(fh_val)
-                            num_pages_val = len(reader_obj_val.pages) if reader_obj_val.pages else 1
-                        except HttpError as he:
-                            st.warning(f"PDF HTTP Error for {trade_name_val} ({dar_url_val}): {he}. Using placeholder.")
-                        except Exception as e_fetch_val:
-                            st.warning(f"PDF Read Error for {trade_name_val} ({dar_url_val}): {e_fetch_val}. Using placeholder.")
-                    
-                    dar_objects_for_merge_and_index.append({
-                        'circle': circle_val, 
-                        'trade_name': trade_name_val,
-                        'num_pages_in_dar': num_pages_val, 
-                        'pdf_reader': reader_obj_val, 
-                        'dar_url': dar_url_val
-                    })
-                    progress_bar.progress(current_pdf_step / total_steps_for_pdf)
+        if st.button("Compile Full MCM Agenda PDF", key="compile_mcm_agenda_pdf_final_v4_progress", type="primary", help="Generates a comprehensive PDF.", use_container_width=True):
+            if df_period_data_full.empty:
+                st.error("No data available for the selected MCM period to compile into PDF.")
             else:
-                status_message_area.error("Google Drive service not available.")
-                progress_bar.empty()
-                st.stop()
-
-        # Now compile with progress
-        try:
-            # Step 2: Cover Page
-            current_pdf_step += 1
-            status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Generating Cover Page...")
-            cover_buffer = BytesIO()
-            create_cover_page_pdf(cover_buffer, f"Audit Paras for MCM {month_year_str}", "Audit 1 Commissionerate Mumbai")
-            cover_reader = PdfReader(cover_buffer)
-            final_pdf_merger.append(cover_reader)
-            compiled_pdf_pages_count += len(cover_reader.pages)
-            progress_bar.progress(current_pdf_step / total_steps_for_pdf)
-
-            # Step 3: High-Value Paras Table
-            current_pdf_step += 1
-            status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Generating High-Value Paras Table...")
-            df_hv_data = df_period_data_full[(df_period_data_full['Revenue Involved (Lakhs Rs)'].fillna(0) * 100000) > 500000].copy()
-            df_hv_data.sort_values(by='Revenue Involved (Lakhs Rs)', ascending=False, inplace=True)
-            hv_pages_count = 0
-            if not df_hv_data.empty:
-                hv_buffer = BytesIO()
-                create_high_value_paras_pdf(hv_buffer, df_hv_data)
-                hv_reader = PdfReader(hv_buffer)
-                final_pdf_merger.append(hv_reader)
-                hv_pages_count = len(hv_reader.pages)
-            compiled_pdf_pages_count += hv_pages_count
-            progress_bar.progress(current_pdf_step / total_steps_for_pdf)
-
-            # Step 4: Index Page
-            current_pdf_step += 1
-            status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Generating Index Page...")
-            index_page_actual_start = compiled_pdf_pages_count + 1
-            dar_start_page_counter_val = index_page_actual_start + 1  # After index page(s)
-            
-            index_items_list_final = []
-            for item_info in dar_objects_for_merge_and_index:
-                index_items_list_final.append({
-                    'circle': item_info['circle'], 
-                    'trade_name': item_info['trade_name'],
-                    'start_page_in_final_pdf': dar_start_page_counter_val, 
-                    'num_pages_in_dar': item_info['num_pages_in_dar']
-                })
-                dar_start_page_counter_val += item_info['num_pages_in_dar']
-            
-            index_buffer = BytesIO()
-            create_index_page_pdf(index_buffer, index_items_list_final, index_page_actual_start)
-            index_reader = PdfReader(index_buffer)
-            final_pdf_merger.append(index_reader)
-            compiled_pdf_pages_count += len(index_reader.pages)
-            progress_bar.progress(current_pdf_step / total_steps_for_pdf)
-
-            # Step 5: Merge actual DAR PDFs
-            for i, dar_detail_info in enumerate(dar_objects_for_merge_and_index):
-                current_pdf_step += 1
-                status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Merging DAR {i+1}/{total_dars} ({html.escape(dar_detail_info['trade_name'])})...")
-                if dar_detail_info['pdf_reader']:
-                    final_pdf_merger.append(dar_detail_info['pdf_reader'])
-                else:  # Placeholder
-                    ph_b = BytesIO()
-                    ph_d = SimpleDocTemplate(ph_b, pagesize=A4)
-                    ph_s = [Paragraph(f"Content for {html.escape(dar_detail_info['trade_name'])} (URL: {html.escape(dar_detail_info['dar_url'])}) failed to load.", getSampleStyleSheet()['Normal'])]
-                    ph_d.build(ph_s)
-                    ph_b.seek(0)
-                    final_pdf_merger.append(PdfReader(ph_b))
-                progress_bar.progress(current_pdf_step / total_steps_for_pdf)
-
-            # Step 6: Finalize PDF
-            current_pdf_step += 1
-            status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Finalizing PDF...")
-            output_pdf_final = BytesIO()
-            final_pdf_merger.write(output_pdf_final)
-            output_pdf_final.seek(0)
-            progress_bar.progress(1.0)
-            status_message_area.success("PDF Compilation Complete!")
-            
-            dl_filename = f"MCM_Agenda_{month_year_str.replace(' ', '_')}_Compiled.pdf"
-            st.download_button(label="Download Compiled PDF Agenda", data=output_pdf_final, file_name=dl_filename, mime="application/pdf")
-
-        except Exception as e_compile_outer:
-            status_message_area.error(f"An error occurred during PDF compilation: {e_compile_outer}")
-            import traceback
-            st.error(traceback.format_exc())
-        finally:
-            import time
-            time.sleep(0.5)  # Brief pause to ensure user sees final status
-            status_message_area.empty()
-            progress_bar.empty()
-       
+                status_message_area = st.empty() 
+                progress_bar = st.progress(0)
+                
+                with st.spinner("Preparing for PDF compilation..."):
+                    final_pdf_merger = PdfWriter()
+                    compiled_pdf_pages_count = 0 
+        
+                    # Filter and sort data for PDF
+                    df_for_pdf = df_period_data_full.dropna(subset=['DAR PDF URL', 'Trade Name', circle_col_to_use]).copy()
+                    df_for_pdf[circle_col_to_use] = pd.to_numeric(df_for_pdf[circle_col_to_use], errors='coerce').fillna(0).astype(int)
+                    
+                    # Get unique DARs, sorted for consistent processing order
+                    unique_dars_to_process = df_for_pdf.sort_values(by=[circle_col_to_use, 'Trade Name', 'DAR PDF URL']).drop_duplicates(subset=['DAR PDF URL'])
+                    total_dars = len(unique_dars_to_process)
+                    
+                    dar_objects_for_merge_and_index = [] 
+                    
+                    if total_dars == 0:
+                        status_message_area.warning("No valid DARs with PDF URLs found to compile.")
+                        progress_bar.empty()
+                        st.stop()
+        
+                    total_steps_for_pdf = 4 + total_dars  # Cover, High-Value, Index, each DAR, Finalize
+                    current_pdf_step = 0
+        
+                    # Step 1: Pre-fetch DAR PDFs to count pages
+                    if drive_service:
+                        status_message_area.info(f"Pre-fetching {total_dars} DAR PDFs to count pages and prepare content...")
+                        for idx, dar_row in unique_dars_to_process.iterrows():
+                            current_pdf_step += 1
+                            dar_url_val = dar_row.get('DAR PDF URL')
+                            file_id_val = get_file_id_from_drive_url(dar_url_val)
+                            num_pages_val = 1  # Default in case of fetch failure
+                            reader_obj_val = None
+                            trade_name_val = dar_row.get('Trade Name', 'Unknown DAR')
+                            circle_val = f"Circle {int(dar_row.get(circle_col_to_use, 0))}"
+        
+                            status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Fetching DAR {idx+1}/{total_dars} for {trade_name_val}...")
+                            if file_id_val:
+                                try:
+                                    req_val = drive_service.files().get_media(fileId=file_id_val)
+                                    fh_val = BytesIO()
+                                    downloader = MediaIoBaseDownload(fh_val, req_val)
+                                    done = False
+                                    while not done:
+                                        status, done = downloader.next_chunk(num_retries=2)
+                                    fh_val.seek(0)
+                                    reader_obj_val = PdfReader(fh_val)
+                                    num_pages_val = len(reader_obj_val.pages) if reader_obj_val.pages else 1
+                                except HttpError as he:
+                                    st.warning(f"PDF HTTP Error for {trade_name_val} ({dar_url_val}): {he}. Using placeholder.")
+                                except Exception as e_fetch_val:
+                                    st.warning(f"PDF Read Error for {trade_name_val} ({dar_url_val}): {e_fetch_val}. Using placeholder.")
+                            
+                            dar_objects_for_merge_and_index.append({
+                                'circle': circle_val, 
+                                'trade_name': trade_name_val,
+                                'num_pages_in_dar': num_pages_val, 
+                                'pdf_reader': reader_obj_val, 
+                                'dar_url': dar_url_val
+                            })
+                            progress_bar.progress(current_pdf_step / total_steps_for_pdf)
+                    else:
+                        status_message_area.error("Google Drive service not available.")
+                        progress_bar.empty()
+                        st.stop()
+        
+                # Now compile with progress
+                try:
+                    # Step 2: Cover Page
+                    current_pdf_step += 1
+                    status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Generating Cover Page...")
+                    cover_buffer = BytesIO()
+                    create_cover_page_pdf(cover_buffer, f"Audit Paras for MCM {month_year_str}", "Audit 1 Commissionerate Mumbai")
+                    cover_reader = PdfReader(cover_buffer)
+                    final_pdf_merger.append(cover_reader)
+                    compiled_pdf_pages_count += len(cover_reader.pages)
+                    progress_bar.progress(current_pdf_step / total_steps_for_pdf)
+        
+                    # Step 3: High-Value Paras Table
+                    current_pdf_step += 1
+                    status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Generating High-Value Paras Table...")
+                    df_hv_data = df_period_data_full[(df_period_data_full['Revenue Involved (Lakhs Rs)'].fillna(0) * 100000) > 500000].copy()
+                    df_hv_data.sort_values(by='Revenue Involved (Lakhs Rs)', ascending=False, inplace=True)
+                    hv_pages_count = 0
+                    if not df_hv_data.empty:
+                        hv_buffer = BytesIO()
+                        create_high_value_paras_pdf(hv_buffer, df_hv_data)
+                        hv_reader = PdfReader(hv_buffer)
+                        final_pdf_merger.append(hv_reader)
+                        hv_pages_count = len(hv_reader.pages)
+                    compiled_pdf_pages_count += hv_pages_count
+                    progress_bar.progress(current_pdf_step / total_steps_for_pdf)
+        
+                    # Step 4: Index Page
+                    current_pdf_step += 1
+                    status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Generating Index Page...")
+                    index_page_actual_start = compiled_pdf_pages_count + 1
+                    dar_start_page_counter_val = index_page_actual_start + 1  # After index page(s)
+                    
+                    index_items_list_final = []
+                    for item_info in dar_objects_for_merge_and_index:
+                        index_items_list_final.append({
+                            'circle': item_info['circle'], 
+                            'trade_name': item_info['trade_name'],
+                            'start_page_in_final_pdf': dar_start_page_counter_val, 
+                            'num_pages_in_dar': item_info['num_pages_in_dar']
+                        })
+                        dar_start_page_counter_val += item_info['num_pages_in_dar']
+                    
+                    index_buffer = BytesIO()
+                    create_index_page_pdf(index_buffer, index_items_list_final, index_page_actual_start)
+                    index_reader = PdfReader(index_buffer)
+                    final_pdf_merger.append(index_reader)
+                    compiled_pdf_pages_count += len(index_reader.pages)
+                    progress_bar.progress(current_pdf_step / total_steps_for_pdf)
+        
+                    # Step 5: Merge actual DAR PDFs
+                    for i, dar_detail_info in enumerate(dar_objects_for_merge_and_index):
+                        current_pdf_step += 1
+                        status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Merging DAR {i+1}/{total_dars} ({html.escape(dar_detail_info['trade_name'])})...")
+                        if dar_detail_info['pdf_reader']:
+                            final_pdf_merger.append(dar_detail_info['pdf_reader'])
+                        else:  # Placeholder
+                            ph_b = BytesIO()
+                            ph_d = SimpleDocTemplate(ph_b, pagesize=A4)
+                            ph_s = [Paragraph(f"Content for {html.escape(dar_detail_info['trade_name'])} (URL: {html.escape(dar_detail_info['dar_url'])}) failed to load.", getSampleStyleSheet()['Normal'])]
+                            ph_d.build(ph_s)
+                            ph_b.seek(0)
+                            final_pdf_merger.append(PdfReader(ph_b))
+                        progress_bar.progress(current_pdf_step / total_steps_for_pdf)
+        
+                    # Step 6: Finalize PDF
+                    current_pdf_step += 1
+                    status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Finalizing PDF...")
+                    output_pdf_final = BytesIO()
+                    final_pdf_merger.write(output_pdf_final)
+                    output_pdf_final.seek(0)
+                    progress_bar.progress(1.0)
+                    status_message_area.success("PDF Compilation Complete!")
+                    
+                    dl_filename = f"MCM_Agenda_{month_year_str.replace(' ', '_')}_Compiled.pdf"
+                    st.download_button(label="Download Compiled PDF Agenda", data=output_pdf_final, file_name=dl_filename, mime="application/pdf")
+        
+                except Exception as e_compile_outer:
+                    status_message_area.error(f"An error occurred during PDF compilation: {e_compile_outer}")
+                    import traceback
+                    st.error(traceback.format_exc())
+                finally:
+                    import time
+                    time.sleep(0.5)  # Brief pause to ensure user sees final status
+                    status_message_area.empty()
+                    progress_bar.empty()
+               
