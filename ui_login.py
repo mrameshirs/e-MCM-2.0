@@ -46,8 +46,8 @@ def login_page():
     #st.markdown("<h5 class='login-header-text'>User Login</h5>", unsafe_allow_html=True)
     st.markdown("""
     <div class='app-description'>
-        Welcome! This platform streamlines Draft Audit Report (DAR) collection and processing.
-        PCOs manage MCM periods; Audit Groups upload DARs for AI-powered data extraction.
+        Welcome! This digital platform streamlines Draft Audit Report (DAR) collection , processing and compilation from Audit Groups for MCM 
+         purpose using  AI-powered data extraction.
     </div>
     """, unsafe_allow_html=True)
 
