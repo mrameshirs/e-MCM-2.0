@@ -255,17 +255,47 @@ def audit_group_dashboard(drive_service, sheets_service):
                 # Enable submit button only if there is data in the editor (even if it's just the template row from failed extraction)
                 can_submit = not edited_df_local_copy.empty if not st.session_state.ag_editor_data.empty else False
                 if st.button("Validate and Submit to MCM Sheet", key=submit_button_key, use_container_width=True, disabled=not can_submit):
-                    df_to_submit = edited_df_local_copy.copy() # Use the current state from the editor widget
-                    
-                    df_to_submit["audit_group_number"] = st.session_state.audit_group_no
-                    df_to_submit["audit_circle_number"] = calculate_audit_circle(st.session_state.audit_group_no)
+                    # Start with the data from the editor
+                    df_from_editor = edited_df_local_copy.copy()
 
-                    num_cols_to_convert = ["total_amount_detected_overall_rs", "total_amount_recovered_overall_rs", "audit_para_number", "revenue_involved_lakhs_rs", "revenue_recovered_lakhs_rs"]
-                    for nc in num_cols_to_convert:
-                        if nc in df_to_submit.columns: df_to_submit[nc] = pd.to_numeric(df_to_submit[nc], errors='coerce')
-                    
-                    st.session_state.ag_validation_errors = validate_data_for_sheet(df_to_submit)
+                    # 1. Silently drop any completely empty rows
+                    df_to_submit = df_from_editor.dropna(how='all').reset_index(drop=True)
 
+                    if df_to_submit.empty and not df_from_editor.empty:
+                        # This case handles if the user only created empty rows and nothing else
+                        st.error("Submission failed: Only empty rows were found. Please fill in the details.")
+                    else:
+                        # 2. Check for missing data in essential columns for the remaining rows
+                        # The 'audit_para_heading' is critical as it caused the original error
+                        required_cols = ['gstin', 'trade_name', 'audit_para_heading']
+                        
+                        # Create a boolean Series: True for any row that has a null in any required_col
+                        missing_required = df_to_submit[required_cols].isnull().any(axis=1)
+
+                        if missing_required.any():
+                            st.error("Submission failed: At least one row is missing required information (e.g., GSTIN, Trade Name, or Para Heading). Please complete all fields.")
+                        else:
+                            # 3. If all checks pass, proceed with the original logic
+                            df_to_submit["audit_group_number"] = st.session_state.audit_group_no
+                            df_to_submit["audit_circle_number"] = calculate_audit_circle(st.session_state.audit_group_no)
+
+                            num_cols_to_convert = ["total_amount_detected_overall_rs", "total_amount_recovered_overall_rs", "audit_para_number", "revenue_involved_lakhs_rs", "revenue_recovered_lakhs_rs"]
+                            for nc in num_cols_to_convert:
+                                if nc in df_to_submit.columns: df_to_submit[nc] = pd.to_numeric(df_to_submit[nc], errors='coerce')
+                            
+                            st.session_state.ag_validation_errors = validate_data_for_sheet(df_to_submit)
+                # if st.button("Validate and Submit to MCM Sheet", key=submit_button_key, use_container_width=True, disabled=not can_submit):
+                #     df_to_submit = edited_df_local_copy.copy() # Use the current state from the editor widget
+                    
+                #     df_to_submit["audit_group_number"] = st.session_state.audit_group_no
+                #     df_to_submit["audit_circle_number"] = calculate_audit_circle(st.session_state.audit_group_no)
+
+                #     num_cols_to_convert = ["total_amount_detected_overall_rs", "total_amount_recovered_overall_rs", "audit_para_number", "revenue_involved_lakhs_rs", "revenue_recovered_lakhs_rs"]
+                #     for nc in num_cols_to_convert:
+                #         if nc in df_to_submit.columns: df_to_submit[nc] = pd.to_numeric(df_to_submit[nc], errors='coerce')
+                    
+                #     st.session_state.ag_validation_errors = validate_data_for_sheet(df_to_submit)
+   
                     if not st.session_state.ag_validation_errors:
                         if not st.session_state.ag_pdf_drive_url: 
                             st.error("PDF Drive URL missing. This indicates the initial PDF upload with extraction failed. Please re-extract data."); st.stop()
