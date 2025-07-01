@@ -245,193 +245,416 @@ def pco_dashboard(drive_service, sheets_service):
     elif selected_tab == "MCM Agenda":
         mcm_agenda_tab(drive_service, sheets_service, mcm_periods) # Call the imported function
     # ========================== VISUALIZATIONS TAB ==========================
-    elif selected_tab == "Visualizations":
-        st.markdown("<h3>Data Visualizations</h3>", unsafe_allow_html=True)
-        all_mcm_periods_for_viz_tab = mcm_periods  # Use directly loaded mcm_periods
-        if not all_mcm_periods_for_viz_tab:
-            st.info("No MCM periods to visualize data from.")
+    # ========================== VISUALIZATIONS TAB ==========================
+elif selected_tab == "Visualizations":
+    st.markdown("<h3>Data Visualizations</h3>", unsafe_allow_html=True)
+    all_mcm_periods_for_viz_tab = mcm_periods  # Use directly loaded mcm_periods
+    if not all_mcm_periods_for_viz_tab:
+        st.info("No MCM periods to visualize data from.")
+    else:
+        viz_options_list = [f"{p.get('month_name')} {p.get('year')}" for k, p in sorted(all_mcm_periods_for_viz_tab.items(), key=lambda x: x[0], reverse=True) if p.get('month_name') and p.get('year')]
+        if not viz_options_list and all_mcm_periods_for_viz_tab:
+            st.warning("No valid MCM periods with complete month/year information for visualization options.")
+        elif not viz_options_list:
+            st.info("No MCM periods available to visualize.")
         else:
-            viz_options_list = [f"{p.get('month_name')} {p.get('year')}" for k, p in sorted(all_mcm_periods_for_viz_tab.items(), key=lambda x: x[0], reverse=True) if p.get('month_name') and p.get('year')]
-            if not viz_options_list and all_mcm_periods_for_viz_tab:
-                st.warning("No valid MCM periods with complete month/year information for visualization options.")
-            elif not viz_options_list:
-                st.info("No MCM periods available to visualize.")
-            else:
-                selected_viz_period_str_tab = st.selectbox("Select MCM Period for Visualization", options=viz_options_list, key="pco_viz_selectbox_final_v4")
-                if selected_viz_period_str_tab and sheets_service:
-                    selected_viz_period_k_tab = next((k for k, p in all_mcm_periods_for_viz_tab.items() if f"{p.get('month_name')} {p.get('year')}" == selected_viz_period_str_tab), None)
-                    if selected_viz_period_k_tab:
-                        sheet_id_for_viz_tab = all_mcm_periods_for_viz_tab[selected_viz_period_k_tab]['spreadsheet_id']
-                        with st.spinner("Loading data for visualizations..."):
-                            df_viz_data = read_from_spreadsheet(sheets_service, sheet_id_for_viz_tab)  # Main DataFrame for this tab
-                        if df_viz_data is not None and not df_viz_data.empty:
-                            # --- Data Cleaning and Preparation ---
-                            viz_amount_cols = ['Total Amount Detected (Overall Rs)', 'Total Amount Recovered (Overall Rs)', 'Revenue Involved (Lakhs Rs)', 'Revenue Recovered (Lakhs Rs)']
-                            for v_col in viz_amount_cols:
-                                if v_col in df_viz_data.columns:
-                                    df_viz_data[v_col] = pd.to_numeric(df_viz_data[v_col], errors='coerce').fillna(0)
-                            
-                            # --- De-duplicate data for aggregated charts to prevent inflated sums ---
-                            if 'DAR PDF URL' in df_viz_data.columns and df_viz_data['DAR PDF URL'].notna().any():
-                                df_unique_reports = df_viz_data.drop_duplicates(subset=['DAR PDF URL']).copy()
-                            else:
-                                st.warning("⚠️ 'DAR PDF URL' column not found. Chart sums might be inflated due to repeated values.", icon=" ")
-                                df_unique_reports = df_viz_data.copy()
-    
-                            # --- NEW: Convert amounts to Lakhs on the de-duplicated data for clear visualization ---
-                            if 'Total Amount Detected (Overall Rs)' in df_unique_reports.columns:
-                                df_unique_reports['Detection in Lakhs'] = df_unique_reports['Total Amount Detected (Overall Rs)'] / 100000.0
-                            if 'Total Amount Recovered (Overall Rs)' in df_unique_reports.columns:
-                                df_unique_reports['Recovery in Lakhs'] = df_unique_reports['Total Amount Recovered (Overall Rs)'] / 100000.0
-    
-    
-                            # Prepare other columns for categorization and grouping
-                            for df in [df_viz_data, df_unique_reports]:
-                                if 'Audit Group Number' in df.columns:
-                                    df['Audit Group Number'] = pd.to_numeric(df['Audit Group Number'], errors='coerce').fillna(0).astype(int)
-                                else:
-                                    df['Audit Group Number'] = 0
-                                df['Audit Group Number Str'] = df['Audit Group Number'].astype(str)
-                                
-                                if 'Audit Circle Number' in df.columns and df['Audit Circle Number'].notna().any() and pd.to_numeric(df['Audit Circle Number'], errors='coerce').notna().any():
-                                    df['Circle Number For Plot'] = pd.to_numeric(df['Audit Circle Number'], errors='coerce').fillna(0).astype(int)
-                                elif 'Audit Group Number' in df.columns and not df['Audit Group Number'].eq(0).all():
-                                    df['Circle Number For Plot'] = ((df['Audit Group Number'] - 1) // 3 + 1).astype(int)
-                                else:
-                                    df['Circle Number For Plot'] = 0
-                                df['Circle Number Str Plot'] = df['Circle Number For Plot'].astype(str)
-                                
-                                df['Category'] = df.get('Category', pd.Series(dtype='str')).fillna('Unknown')
-                                df['Trade Name'] = df.get('Trade Name', pd.Series(dtype='str')).fillna('Unknown Trade Name')
-                                df['Status of para'] = df.get('Status of para', pd.Series(dtype='str')).fillna('Unknown')
-    
-                            # --- Para Status Distribution (uses original full data) ---
-                            st.markdown("---")
-                            st.markdown("<h4>Para Status Distribution</h4>", unsafe_allow_html=True)
-                            if 'Status of para' in df_viz_data.columns and df_viz_data['Status of para'].nunique() > 1:
-                                viz_status_counts = df_viz_data['Status of para'].value_counts().reset_index()
-                                viz_status_counts.columns = ['Status of para', 'Count']
-                                viz_fig_status_dist = px.bar(viz_status_counts, x='Status of para', y='Count', text_auto=True, title="Distribution of Para Statuses", labels={'Status of para': '<b>Status</b>', 'Count': 'Number of Paras'})
-                                viz_fig_status_dist.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
-                                viz_fig_status_dist.update_traces(textposition='outside', marker_color='teal')
-                                st.plotly_chart(viz_fig_status_dist, use_container_width=True)
-                            else:
-                                st.info("Not enough data for 'Status of para' distribution chart.")
-    
-                            # --- Group-wise Performance (uses de-duplicated data and shows in Lakhs) ---
-                            st.markdown("---")
-                            st.markdown("<h4>Group-wise Performance</h4>", unsafe_allow_html=True)
-                            if 'Detection in Lakhs' in df_unique_reports.columns and (df_unique_reports['Audit Group Number'].nunique() > 1 or (df_unique_reports['Audit Group Number'].nunique() == 1 and df_unique_reports['Audit Group Number'].iloc[0] != 0)):
-                                viz_detection_data = df_unique_reports.groupby('Audit Group Number Str')['Detection in Lakhs'].sum().reset_index().sort_values(by='Detection in Lakhs', ascending=False).nlargest(5, 'Detection in Lakhs')
-                                if not viz_detection_data.empty:
-                                    st.write("**Top 5 Groups by Total Detection Amount (Lakhs Rs):**")
-                                    fig_det_grp = px.bar(viz_detection_data, x='Audit Group Number Str', y='Detection in Lakhs', text_auto='.2f', labels={'Detection in Lakhs': 'Total Detection (Lakhs Rs)', 'Audit Group Number Str': '<b>Audit Group</b>'})
-                                    fig_det_grp.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
-                                    fig_det_grp.update_traces(textposition='outside', marker_color='indianred')
-                                    st.plotly_chart(fig_det_grp, use_container_width=True)
-                            
-                            if 'Recovery in Lakhs' in df_unique_reports.columns and (df_unique_reports['Audit Group Number'].nunique() > 1 or (df_unique_reports['Audit Group Number'].nunique() == 1 and df_unique_reports['Audit Group Number'].iloc[0] != 0)):
-                                viz_recovery_data = df_unique_reports.groupby('Audit Group Number Str')['Recovery in Lakhs'].sum().reset_index().sort_values(by='Recovery in Lakhs', ascending=False).nlargest(5, 'Recovery in Lakhs')
-                                if not viz_recovery_data.empty:
-                                    st.write("**Top 5 Groups by Total Realisation Amount (Lakhs Rs):**")
-                                    fig_rec_grp = px.bar(viz_recovery_data, x='Audit Group Number Str', y='Recovery in Lakhs', text_auto='.2f', labels={'Recovery in Lakhs': 'Total Realisation (Lakhs Rs)', 'Audit Group Number Str': '<b>Audit Group</b>'})
-                                    fig_rec_grp.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
-                                    fig_rec_grp.update_traces(textposition='outside', marker_color='lightseagreen')
-                                    st.plotly_chart(fig_rec_grp, use_container_width=True)
-    
-                            # --- Circle-wise Performance (uses de-duplicated data and shows in Lakhs) ---
-                            st.markdown("---")
-                            st.markdown("<h4>Circle-wise Performance Metrics</h4>", unsafe_allow_html=True)
-                            if 'Circle Number Str Plot' in df_unique_reports and (df_unique_reports['Circle Number For Plot'].nunique() > 1 or (df_unique_reports['Circle Number For Plot'].nunique() == 1 and df_unique_reports['Circle Number For Plot'].iloc[0] != 0)):
-                                if 'Recovery in Lakhs' in df_unique_reports.columns:
-                                    recovery_per_circle_plot = df_unique_reports.groupby('Circle Number Str Plot')['Recovery in Lakhs'].sum().reset_index().sort_values(by='Recovery in Lakhs', ascending=False)
-                                    if not recovery_per_circle_plot.empty:
-                                        st.write("**Total Recovery Amount (Lakhs Rs) per Circle (Descending):**")
-                                        fig_rec_circle_plot = px.bar(recovery_per_circle_plot, x='Circle Number Str Plot', y='Recovery in Lakhs', text_auto='.2f', labels={'Recovery in Lakhs': 'Total Recovery (Lakhs Rs)', 'Circle Number Str Plot': '<b>Circle Number</b>'}, title="Circle-wise Total Recovery")
-                                        fig_rec_circle_plot.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
-                                        fig_rec_circle_plot.update_traces(textposition='outside', marker_color='goldenrod')
-                                        st.plotly_chart(fig_rec_circle_plot, use_container_width=True)
-    
-                                if 'Detection in Lakhs' in df_unique_reports.columns:
-                                    detection_per_circle_plot = df_unique_reports.groupby('Circle Number Str Plot')['Detection in Lakhs'].sum().reset_index().sort_values(by='Detection in Lakhs', ascending=False)
-                                    if not detection_per_circle_plot.empty:
-                                        st.write("**Total Detection Amount (Lakhs Rs) per Circle (Descending):**")
-                                        fig_det_circle_plot = px.bar(detection_per_circle_plot, x='Circle Number Str Plot', y='Detection in Lakhs', text_auto='.2f', labels={'Detection in Lakhs': 'Total Detection (Lakhs Rs)', 'Circle Number Str Plot': '<b>Circle Number</b>'}, title="Circle-wise Total Detection")
-                                        fig_det_circle_plot.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
-                                        fig_det_circle_plot.update_traces(textposition='outside', marker_color='mediumseagreen')
-                                        st.plotly_chart(fig_det_circle_plot, use_container_width=True)
-    
-                            # --- Treemap Visualizations (uses de-duplicated data and shows in Lakhs) ---
-                            st.markdown("---")
-                            st.markdown("<h4>Detection and Recovery Treemaps by Trade Name</h4>", unsafe_allow_html=True)
-                            if 'Detection in Lakhs' in df_unique_reports.columns:
-                                viz_df_detection_treemap = df_unique_reports[df_unique_reports['Detection in Lakhs'] > 0]
-                                if not viz_df_detection_treemap.empty:
-                                    st.write("**Detection Amounts (Lakhs Rs) by Trade Name (Size: Amount, Color: Category)**")
-                                    viz_fig_treemap_detection = px.treemap(viz_df_detection_treemap, path=[px.Constant("All Detections"), 'Category', 'Trade Name'], values='Detection in Lakhs', color='Category', hover_name='Trade Name', custom_data=['Audit Group Number Str', 'Trade Name'], color_discrete_map={'Large': 'rgba(230, 57, 70, 0.8)', 'Medium': 'rgba(241, 196, 15, 0.8)', 'Small': 'rgba(26, 188, 156, 0.8)', 'Unknown': 'rgba(149, 165, 166, 0.7)'})
-                                    viz_fig_treemap_detection.update_layout(margin=dict(t=30, l=10, r=10, b=10))
-                                    viz_fig_treemap_detection.data[0].textinfo = 'label+value'
-                                    viz_fig_treemap_detection.update_traces(hovertemplate="<b>%{customdata[1]}</b><br>Category: %{parent}<br>Audit Group: %{customdata[0]}<br>Detection: %{value:,.2f} Lakhs Rs<extra></extra>")
-                                    st.plotly_chart(viz_fig_treemap_detection, use_container_width=True)
-    
-                            if 'Recovery in Lakhs' in df_unique_reports.columns:
-                                viz_df_recovery_treemap = df_unique_reports[df_unique_reports['Recovery in Lakhs'] > 0]
-                                if not viz_df_recovery_treemap.empty:
-                                    st.write("**Recovery Amounts (Lakhs Rs) by Trade Name (Size: Amount, Color: Category)**")
-                                    viz_fig_treemap_recovery = px.treemap(viz_df_recovery_treemap, path=[px.Constant("All Recoveries"), 'Category', 'Trade Name'], values='Recovery in Lakhs', color='Category', hover_name='Trade Name', custom_data=['Audit Group Number Str', 'Trade Name'], color_discrete_map={'Large': 'rgba(230, 57, 70, 0.8)', 'Medium': 'rgba(241, 196, 15, 0.8)', 'Small': 'rgba(26, 188, 156, 0.8)', 'Unknown': 'rgba(149, 165, 166, 0.7)'})
-                                    viz_fig_treemap_recovery.update_layout(margin=dict(t=30, l=10, r=10, b=10))
-                                    viz_fig_treemap_recovery.data[0].textinfo = 'label+value'
-                                    viz_fig_treemap_recovery.update_traces(hovertemplate="<b>%{customdata[1]}</b><br>Category: %{parent}<br>Audit Group: %{customdata[0]}<br>Recovery: %{value:,.2f} Lakhs Rs<extra></extra>")
-                                    st.plotly_chart(viz_fig_treemap_recovery, use_container_width=True)
-    
-                            # --- Para-wise Performance (uses original full data) ---
-                            st.markdown("---")
-                            st.markdown("<h4>Para-wise Performance</h4>", unsafe_allow_html=True)
-                            if 'num_paras_to_show_pco' not in st.session_state:
-                                st.session_state.num_paras_to_show_pco = 5
-                            viz_n_paras_input = st.text_input("Enter N for Top N Paras (e.g., 5):", value=str(st.session_state.num_paras_to_show_pco), key="pco_n_paras_input_final_v2")
-                            viz_num_paras_show = st.session_state.num_paras_to_show_pco
-                            try:
-                                viz_parsed_n = int(viz_n_paras_input)
-                                if viz_parsed_n < 1:
-                                    viz_num_paras_show = 5
-                                    st.warning("N must be positive. Showing Top 5.", icon="⚠️")
-                                elif viz_parsed_n > 50:
-                                    viz_num_paras_show = 50
-                                    st.warning("N capped at 50. Showing Top 50.", icon="⚠️")
-                                else:
-                                    viz_num_paras_show = viz_parsed_n
-                                st.session_state.num_paras_to_show_pco = viz_num_paras_show
-                            except ValueError:
-                                if viz_n_paras_input != str(st.session_state.num_paras_to_show_pco):
-                                    st.warning(f"Invalid N ('{viz_n_paras_input}'). Using: {viz_num_paras_show}", icon="⚠️")
-                            
-                            viz_df_paras_only = df_viz_data[df_viz_data['Audit Para Number'].notna() & (~df_viz_data['Audit Para Heading'].astype(str).isin(["N/A - Header Info Only (Add Paras Manually)", "Manual Entry Required", "Manual Entry - PDF Error", "Manual Entry - PDF Upload Failed"]))]
-                            if 'Revenue Involved (Lakhs Rs)' in viz_df_paras_only.columns:
-                                viz_top_det_paras = viz_df_paras_only.nlargest(viz_num_paras_show, 'Revenue Involved (Lakhs Rs)')
-                                if not viz_top_det_paras.empty:
-                                    st.write(f"**Top {viz_num_paras_show} Detection Paras (by Revenue Involved):**")
-                                    viz_disp_cols_det = ['Audit Group Number Str', 'Trade Name', 'Audit Para Number', 'Audit Para Heading', 'Revenue Involved (Lakhs Rs)', 'Status of para']
-                                    viz_existing_cols_det = [c for c in viz_disp_cols_det if c in viz_top_det_paras.columns]
-                                    st.dataframe(viz_top_det_paras[viz_existing_cols_det].rename(columns={'Audit Group Number Str': 'Audit Group'}), use_container_width=True)
-                            if 'Revenue Recovered (Lakhs Rs)' in viz_df_paras_only.columns:
-                                viz_top_rec_paras = viz_df_paras_only.nlargest(viz_num_paras_show, 'Revenue Recovered (Lakhs Rs)')
-                                if not viz_top_rec_paras.empty:
-                                    st.write(f"**Top {viz_num_paras_show} Realisation Paras (by Revenue Recovered):**")
-                                    viz_disp_cols_rec = ['Audit Group Number Str', 'Trade Name', 'Audit Para Number', 'Audit Para Heading', 'Revenue Recovered (Lakhs Rs)', 'Status of para']
-                                    viz_existing_cols_rec = [c for c in viz_disp_cols_rec if c in viz_top_rec_paras.columns]
-                                    st.dataframe(viz_top_rec_paras[viz_existing_cols_rec].rename(columns={'Audit Group Number Str': 'Audit Group'}), use_container_width=True)
-    
-                        elif df_viz_data is None:
-                            st.error("Error reading data from spreadsheet for visualization.")
+            selected_viz_period_str_tab = st.selectbox("Select MCM Period for Visualization", options=viz_options_list, key="pco_viz_selectbox_final_v4")
+            if selected_viz_period_str_tab and sheets_service:
+                selected_viz_period_k_tab = next((k for k, p in all_mcm_periods_for_viz_tab.items() if f"{p.get('month_name')} {p.get('year')}" == selected_viz_period_str_tab), None)
+                if selected_viz_period_k_tab:
+                    sheet_id_for_viz_tab = all_mcm_periods_for_viz_tab[selected_viz_period_k_tab]['spreadsheet_id']
+                    with st.spinner("Loading data for visualizations..."):
+                        df_viz_data = read_from_spreadsheet(sheets_service, sheet_id_for_viz_tab)  # Main DataFrame for this tab
+                    if df_viz_data is not None and not df_viz_data.empty:
+                        # --- Data Cleaning and Preparation ---
+                        viz_amount_cols = ['Total Amount Detected (Overall Rs)', 'Total Amount Recovered (Overall Rs)', 'Revenue Involved (Lakhs Rs)', 'Revenue Recovered (Lakhs Rs)']
+                        for v_col in viz_amount_cols:
+                            if v_col in df_viz_data.columns:
+                                df_viz_data[v_col] = pd.to_numeric(df_viz_data[v_col], errors='coerce').fillna(0)
+                        
+                        if 'Audit Group Number' in df_viz_data.columns:
+                            df_viz_data['Audit Group Number'] = pd.to_numeric(df_viz_data['Audit Group Number'], errors='coerce').fillna(0).astype(int)
+
+                        # --- De-duplicate data for aggregated charts to prevent inflated sums ---
+                        if 'DAR PDF URL' in df_viz_data.columns and df_viz_data['DAR PDF URL'].notna().any():
+                            df_unique_reports = df_viz_data.drop_duplicates(subset=['DAR PDF URL']).copy()
                         else:
-                            st.info(f"No data in spreadsheet for {selected_viz_period_str_tab} to visualize.")
-                    elif not sheets_service and selected_viz_period_k_tab:
-                        st.error("Google Sheets service unavailable when trying to load visualization data.")
-                    elif not sheets_service and selected_viz_period_str_tab:
-                        st.error("Google Sheets service is not available.")
+                            st.warning("⚠️ 'DAR PDF URL' column not found. Chart sums might be inflated due to repeated values.", icon=" ")
+                            df_unique_reports = df_viz_data.copy()
+
+                        # --- NEW: Summary Table ---
+                        st.markdown("#### Monthly Performance Summary")
+                        
+                        # --- Calculations for Summary ---
+                        num_dars = df_unique_reports['DAR PDF URL'].nunique()
+                        total_detected = df_unique_reports['Total Amount Detected (Overall Rs)'].sum()
+                        total_recovered = df_unique_reports['Total Amount Recovered (Overall Rs)'].sum()
+
+                        dars_per_group = df_unique_reports[df_unique_reports['Audit Group Number'] > 0].groupby('Audit Group Number')['DAR PDF URL'].nunique()
+                        
+                        if not dars_per_group.empty:
+                            max_dars_count = dars_per_group.max()
+                            max_dars_group = dars_per_group.idxmax()
+                            max_group_str = f"AG {max_dars_group} ({max_dars_count} DARs)"
+                        else:
+                            max_group_str = "N/A"
+
+                        # Assuming total audit groups are from 1 to 30. This should ideally come from a config file.
+                        all_audit_groups = set(range(1, 31)) 
+                        submitted_groups = set(dars_per_group.index)
+                        zero_dar_groups = sorted(list(all_audit_groups - submitted_groups))
+                        zero_dar_groups_str = ", ".join(map(str, zero_dar_groups)) if zero_dar_groups else "None"
+
+                        # --- Display Summary ---
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric(label="✅ No. of DARs Submitted", value=f"{num_dars}")
+                        col2.metric(label="💰 Total Revenue Involved", value=f"₹{total_detected/100000:.2f} Lakhs")
+                        col3.metric(label="🏆 Total Revenue Recovered", value=f"₹{total_recovered/100000:.2f} Lakhs")
+
+                        st.markdown(f"**Maximum DARs by:** `{max_group_str}`")
+                        st.markdown(f"**Audit Groups with Zero DARs:** `{zero_dar_groups_str}`")
+
+                        # --- End of Summary Table ---
+
+                        # --- NEW: Convert amounts to Lakhs on the de-duplicated data for clear visualization ---
+                        if 'Total Amount Detected (Overall Rs)' in df_unique_reports.columns:
+                            df_unique_reports['Detection in Lakhs'] = df_unique_reports['Total Amount Detected (Overall Rs)'] / 100000.0
+                        if 'Total Amount Recovered (Overall Rs)' in df_unique_reports.columns:
+                            df_unique_reports['Recovery in Lakhs'] = df_unique_reports['Total Amount Recovered (Overall Rs)'] / 100000.0
+
+
+                        # Prepare other columns for categorization and grouping
+                        for df in [df_viz_data, df_unique_reports]:
+                            if 'Audit Group Number' in df.columns:
+                                df['Audit Group Number'] = pd.to_numeric(df['Audit Group Number'], errors='coerce').fillna(0).astype(int)
+                            else:
+                                df['Audit Group Number'] = 0
+                            df['Audit Group Number Str'] = df['Audit Group Number'].astype(str)
+                            
+                            if 'Audit Circle Number' in df.columns and df['Audit Circle Number'].notna().any() and pd.to_numeric(df['Audit Circle Number'], errors='coerce').notna().any():
+                                df['Circle Number For Plot'] = pd.to_numeric(df['Audit Circle Number'], errors='coerce').fillna(0).astype(int)
+                            elif 'Audit Group Number' in df.columns and not df['Audit Group Number'].eq(0).all():
+                                df['Circle Number For Plot'] = ((df['Audit Group Number'] - 1) // 3 + 1).astype(int)
+                            else:
+                                df['Circle Number For Plot'] = 0
+                            df['Circle Number Str Plot'] = df['Circle Number For Plot'].astype(str)
+                            
+                            df['Category'] = df.get('Category', pd.Series(dtype='str')).fillna('Unknown')
+                            df['Trade Name'] = df.get('Trade Name', pd.Series(dtype='str')).fillna('Unknown Trade Name')
+                            df['Status of para'] = df.get('Status of para', pd.Series(dtype='str')).fillna('Unknown')
+
+                        # --- Para Status Distribution (uses original full data) ---
+                        st.markdown("---")
+                        st.markdown("<h4>Para Status Distribution</h4>", unsafe_allow_html=True)
+                        if 'Status of para' in df_viz_data.columns and df_viz_data['Status of para'].nunique() > 1:
+                            viz_status_counts = df_viz_data['Status of para'].value_counts().reset_index()
+                            viz_status_counts.columns = ['Status of para', 'Count']
+                            viz_fig_status_dist = px.bar(viz_status_counts, x='Status of para', y='Count', text_auto=True, title="Distribution of Para Statuses", labels={'Status of para': '<b>Status</b>', 'Count': 'Number of Paras'})
+                            viz_fig_status_dist.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
+                            viz_fig_status_dist.update_traces(textposition='outside', marker_color='teal')
+                            st.plotly_chart(viz_fig_status_dist, use_container_width=True)
+                        else:
+                            st.info("Not enough data for 'Status of para' distribution chart.")
+
+                        # --- Group-wise Performance (uses de-duplicated data and shows in Lakhs) ---
+                        st.markdown("---")
+                        st.markdown("<h4>Group-wise Performance</h4>", unsafe_allow_html=True)
+                        if 'Detection in Lakhs' in df_unique_reports.columns and (df_unique_reports['Audit Group Number'].nunique() > 1 or (df_unique_reports['Audit Group Number'].nunique() == 1 and df_unique_reports['Audit Group Number'].iloc[0] != 0)):
+                            viz_detection_data = df_unique_reports.groupby('Audit Group Number Str')['Detection in Lakhs'].sum().reset_index().sort_values(by='Detection in Lakhs', ascending=False).nlargest(5, 'Detection in Lakhs')
+                            if not viz_detection_data.empty:
+                                st.write("**Top 5 Groups by Total Detection Amount (Lakhs Rs):**")
+                                fig_det_grp = px.bar(viz_detection_data, x='Audit Group Number Str', y='Detection in Lakhs', text_auto='.2f', labels={'Detection in Lakhs': 'Total Detection (Lakhs Rs)', 'Audit Group Number Str': '<b>Audit Group</b>'})
+                                fig_det_grp.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
+                                fig_det_grp.update_traces(textposition='outside', marker_color='indianred')
+                                st.plotly_chart(fig_det_grp, use_container_width=True)
+                        
+                        if 'Recovery in Lakhs' in df_unique_reports.columns and (df_unique_reports['Audit Group Number'].nunique() > 1 or (df_unique_reports['Audit Group Number'].nunique() == 1 and df_unique_reports['Audit Group Number'].iloc[0] != 0)):
+                            viz_recovery_data = df_unique_reports.groupby('Audit Group Number Str')['Recovery in Lakhs'].sum().reset_index().sort_values(by='Recovery in Lakhs', ascending=False).nlargest(5, 'Recovery in Lakhs')
+                            if not viz_recovery_data.empty:
+                                st.write("**Top 5 Groups by Total Realisation Amount (Lakhs Rs):**")
+                                fig_rec_grp = px.bar(viz_recovery_data, x='Audit Group Number Str', y='Recovery in Lakhs', text_auto='.2f', labels={'Recovery in Lakhs': 'Total Realisation (Lakhs Rs)', 'Audit Group Number Str': '<b>Audit Group</b>'})
+                                fig_rec_grp.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
+                                fig_rec_grp.update_traces(textposition='outside', marker_color='lightseagreen')
+                                st.plotly_chart(fig_rec_grp, use_container_width=True)
+
+                        # --- Circle-wise Performance (uses de-duplicated data and shows in Lakhs) ---
+                        st.markdown("---")
+                        st.markdown("<h4>Circle-wise Performance Metrics</h4>", unsafe_allow_html=True)
+                        if 'Circle Number Str Plot' in df_unique_reports and (df_unique_reports['Circle Number For Plot'].nunique() > 1 or (df_unique_reports['Circle Number For Plot'].nunique() == 1 and df_unique_reports['Circle Number For Plot'].iloc[0] != 0)):
+                            if 'Recovery in Lakhs' in df_unique_reports.columns:
+                                recovery_per_circle_plot = df_unique_reports.groupby('Circle Number Str Plot')['Recovery in Lakhs'].sum().reset_index().sort_values(by='Recovery in Lakhs', ascending=False)
+                                if not recovery_per_circle_plot.empty:
+                                    st.write("**Total Recovery Amount (Lakhs Rs) per Circle (Descending):**")
+                                    fig_rec_circle_plot = px.bar(recovery_per_circle_plot, x='Circle Number Str Plot', y='Recovery in Lakhs', text_auto='.2f', labels={'Recovery in Lakhs': 'Total Recovery (Lakhs Rs)', 'Circle Number Str Plot': '<b>Circle Number</b>'}, title="Circle-wise Total Recovery")
+                                    fig_rec_circle_plot.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
+                                    fig_rec_circle_plot.update_traces(textposition='outside', marker_color='goldenrod')
+                                    st.plotly_chart(fig_rec_circle_plot, use_container_width=True)
+                        
+                            if 'Detection in Lakhs' in df_unique_reports.columns:
+                                detection_per_circle_plot = df_unique_reports.groupby('Circle Number Str Plot')['Detection in Lakhs'].sum().reset_index().sort_values(by='Detection in Lakhs', ascending=False)
+                                if not detection_per_circle_plot.empty:
+                                    st.write("**Total Detection Amount (Lakhs Rs) per Circle (Descending):**")
+                                    fig_det_circle_plot = px.bar(detection_per_circle_plot, x='Circle Number Str Plot', y='Detection in Lakhs', text_auto='.2f', labels={'Detection in Lakhs': 'Total Detection (Lakhs Rs)', 'Circle Number Str Plot': '<b>Circle Number</b>'}, title="Circle-wise Total Detection")
+                                    fig_det_circle_plot.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
+                                    fig_det_circle_plot.update_traces(textposition='outside', marker_color='mediumseagreen')
+                                    st.plotly_chart(fig_det_circle_plot, use_container_width=True)
+
+                        # --- Treemap Visualizations (uses de-duplicated data and shows in Lakhs) ---
+                        st.markdown("---")
+                        st.markdown("<h4>Detection and Recovery Treemaps by Trade Name</h4>", unsafe_allow_html=True)
+                        if 'Detection in Lakhs' in df_unique_reports.columns:
+                            viz_df_detection_treemap = df_unique_reports[df_unique_reports['Detection in Lakhs'] > 0]
+                            if not viz_df_detection_treemap.empty:
+                                st.write("**Detection Amounts (Lakhs Rs) by Trade Name (Size: Amount, Color: Category)**")
+                                viz_fig_treemap_detection = px.treemap(viz_df_detection_treemap, path=[px.Constant("All Detections"), 'Category', 'Trade Name'], values='Detection in Lakhs', color='Category', hover_name='Trade Name', custom_data=['Audit Group Number Str', 'Trade Name'], color_discrete_map={'Large': 'rgba(230, 57, 70, 0.8)', 'Medium': 'rgba(241, 196, 15, 0.8)', 'Small': 'rgba(26, 188, 156, 0.8)', 'Unknown': 'rgba(149, 165, 166, 0.7)'})
+                                viz_fig_treemap_detection.update_layout(margin=dict(t=30, l=10, r=10, b=10))
+                                viz_fig_treemap_detection.data[0].textinfo = 'label+value'
+                                viz_fig_treemap_detection.update_traces(hovertemplate="<b>%{customdata[1]}</b><br>Category: %{parent}<br>Audit Group: %{customdata[0]}<br>Detection: %{value:,.2f} Lakhs Rs<extra></extra>")
+                                st.plotly_chart(viz_fig_treemap_detection, use_container_width=True)
+                        
+                        if 'Recovery in Lakhs' in df_unique_reports.columns:
+                            viz_df_recovery_treemap = df_unique_reports[df_unique_reports['Recovery in Lakhs'] > 0]
+                            if not viz_df_recovery_treemap.empty:
+                                st.write("**Recovery Amounts (Lakhs Rs) by Trade Name (Size: Amount, Color: Category)**")
+                                viz_fig_treemap_recovery = px.treemap(viz_df_recovery_treemap, path=[px.Constant("All Recoveries"), 'Category', 'Trade Name'], values='Recovery in Lakhs', color='Category', hover_name='Trade Name', custom_data=['Audit Group Number Str', 'Trade Name'], color_discrete_map={'Large': 'rgba(230, 57, 70, 0.8)', 'Medium': 'rgba(241, 196, 15, 0.8)', 'Small': 'rgba(26, 188, 156, 0.8)', 'Unknown': 'rgba(149, 165, 166, 0.7)'})
+                                viz_fig_treemap_recovery.update_layout(margin=dict(t=30, l=10, r=10, b=10))
+                                viz_fig_treemap_recovery.data[0].textinfo = 'label+value'
+                                viz_fig_treemap_recovery.update_traces(hovertemplate="<b>%{customdata[1]}</b><br>Category: %{parent}<br>Audit Group: %{customdata[0]}<br>Recovery: %{value:,.2f} Lakhs Rs<extra></extra>")
+                                st.plotly_chart(viz_fig_treemap_recovery, use_container_width=True)
+
+                        # --- Para-wise Performance (uses original full data) ---
+                        st.markdown("---")
+                        st.markdown("<h4>Para-wise Performance</h4>", unsafe_allow_html=True)
+                        if 'num_paras_to_show_pco' not in st.session_state:
+                            st.session_state.num_paras_to_show_pco = 5
+                        viz_n_paras_input = st.text_input("Enter N for Top N Paras (e.g., 5):", value=str(st.session_state.num_paras_to_show_pco), key="pco_n_paras_input_final_v2")
+                        viz_num_paras_show = st.session_state.num_paras_to_show_pco
+                        try:
+                            viz_parsed_n = int(viz_n_paras_input)
+                            if viz_parsed_n < 1:
+                                viz_num_paras_show = 5
+                                st.warning("N must be positive. Showing Top 5.", icon="⚠️")
+                            elif viz_parsed_n > 50:
+                                viz_num_paras_show = 50
+                                st.warning("N capped at 50. Showing Top 50.", icon="⚠️")
+                            else:
+                                viz_num_paras_show = viz_parsed_n
+                            st.session_state.num_paras_to_show_pco = viz_num_paras_show
+                        except ValueError:
+                            if viz_n_paras_input != str(st.session_state.num_paras_to_show_pco):
+                                st.warning(f"Invalid N ('{viz_n_paras_input}'). Using: {viz_num_paras_show}", icon="⚠️")
+                        
+                        viz_df_paras_only = df_viz_data[df_viz_data['Audit Para Number'].notna() & (~df_viz_data['Audit Para Heading'].astype(str).isin(["N/A - Header Info Only (Add Paras Manually)", "Manual Entry Required", "Manual Entry - PDF Error", "Manual Entry - PDF Upload Failed"]))]
+                        if 'Revenue Involved (Lakhs Rs)' in viz_df_paras_only.columns:
+                            viz_top_det_paras = viz_df_paras_only.nlargest(viz_num_paras_show, 'Revenue Involved (Lakhs Rs)')
+                            if not viz_top_det_paras.empty:
+                                st.write(f"**Top {viz_num_paras_show} Detection Paras (by Revenue Involved):**")
+                                viz_disp_cols_det = ['Audit Group Number Str', 'Trade Name', 'Audit Para Number', 'Audit Para Heading', 'Revenue Involved (Lakhs Rs)', 'Status of para']
+                                viz_existing_cols_det = [c for c in viz_disp_cols_det if c in viz_top_det_paras.columns]
+                                st.dataframe(viz_top_det_paras[viz_existing_cols_det].rename(columns={'Audit Group Number Str': 'Audit Group'}), use_container_width=True)
+                        if 'Revenue Recovered (Lakhs Rs)' in viz_df_paras_only.columns:
+                            viz_top_rec_paras = viz_df_paras_only.nlargest(viz_num_paras_show, 'Revenue Recovered (Lakhs Rs)')
+                            if not viz_top_rec_paras.empty:
+                                st.write(f"**Top {viz_num_paras_show} Realisation Paras (by Revenue Recovered):**")
+                                viz_disp_cols_rec = ['Audit Group Number Str', 'Trade Name', 'Audit Para Number', 'Audit Para Heading', 'Revenue Recovered (Lakhs Rs)', 'Status of para']
+                                viz_existing_cols_rec = [c for c in viz_disp_cols_rec if c in viz_top_rec_paras.columns]
+                                st.dataframe(viz_top_rec_paras[viz_existing_cols_rec].rename(columns={'Audit Group Number Str': 'Audit Group'}), use_container_width=True)
+
+                    elif df_viz_data is None:
+                        st.error("Error reading data from spreadsheet for visualization.")
+                    else:
+                        st.info(f"No data in spreadsheet for {selected_viz_period_str_tab} to visualize.")
+                elif not sheets_service and selected_viz_period_k_tab:
+                    st.error("Google Sheets service unavailable when trying to load visualization data.")
+                elif not sheets_service and selected_viz_period_str_tab:
+                    st.error("Google Sheets service is not available.")
+    # elif selected_tab == "Visualizations":
+    #     st.markdown("<h3>Data Visualizations</h3>", unsafe_allow_html=True)
+    #     all_mcm_periods_for_viz_tab = mcm_periods  # Use directly loaded mcm_periods
+    #     if not all_mcm_periods_for_viz_tab:
+    #         st.info("No MCM periods to visualize data from.")
+    #     else:
+    #         viz_options_list = [f"{p.get('month_name')} {p.get('year')}" for k, p in sorted(all_mcm_periods_for_viz_tab.items(), key=lambda x: x[0], reverse=True) if p.get('month_name') and p.get('year')]
+    #         if not viz_options_list and all_mcm_periods_for_viz_tab:
+    #             st.warning("No valid MCM periods with complete month/year information for visualization options.")
+    #         elif not viz_options_list:
+    #             st.info("No MCM periods available to visualize.")
+    #         else:
+    #             selected_viz_period_str_tab = st.selectbox("Select MCM Period for Visualization", options=viz_options_list, key="pco_viz_selectbox_final_v4")
+    #             if selected_viz_period_str_tab and sheets_service:
+    #                 selected_viz_period_k_tab = next((k for k, p in all_mcm_periods_for_viz_tab.items() if f"{p.get('month_name')} {p.get('year')}" == selected_viz_period_str_tab), None)
+    #                 if selected_viz_period_k_tab:
+    #                     sheet_id_for_viz_tab = all_mcm_periods_for_viz_tab[selected_viz_period_k_tab]['spreadsheet_id']
+    #                     with st.spinner("Loading data for visualizations..."):
+    #                         df_viz_data = read_from_spreadsheet(sheets_service, sheet_id_for_viz_tab)  # Main DataFrame for this tab
+    #                     if df_viz_data is not None and not df_viz_data.empty:
+    #                         # --- Data Cleaning and Preparation ---
+    #                         viz_amount_cols = ['Total Amount Detected (Overall Rs)', 'Total Amount Recovered (Overall Rs)', 'Revenue Involved (Lakhs Rs)', 'Revenue Recovered (Lakhs Rs)']
+    #                         for v_col in viz_amount_cols:
+    #                             if v_col in df_viz_data.columns:
+    #                                 df_viz_data[v_col] = pd.to_numeric(df_viz_data[v_col], errors='coerce').fillna(0)
+                            
+    #                         # --- De-duplicate data for aggregated charts to prevent inflated sums ---
+    #                         if 'DAR PDF URL' in df_viz_data.columns and df_viz_data['DAR PDF URL'].notna().any():
+    #                             df_unique_reports = df_viz_data.drop_duplicates(subset=['DAR PDF URL']).copy()
+    #                         else:
+    #                             st.warning("⚠️ 'DAR PDF URL' column not found. Chart sums might be inflated due to repeated values.", icon=" ")
+    #                             df_unique_reports = df_viz_data.copy()
     
-        st.markdown("</div>", unsafe_allow_html=True)
+    #                         # --- NEW: Convert amounts to Lakhs on the de-duplicated data for clear visualization ---
+    #                         if 'Total Amount Detected (Overall Rs)' in df_unique_reports.columns:
+    #                             df_unique_reports['Detection in Lakhs'] = df_unique_reports['Total Amount Detected (Overall Rs)'] / 100000.0
+    #                         if 'Total Amount Recovered (Overall Rs)' in df_unique_reports.columns:
+    #                             df_unique_reports['Recovery in Lakhs'] = df_unique_reports['Total Amount Recovered (Overall Rs)'] / 100000.0
+    
+    
+    #                         # Prepare other columns for categorization and grouping
+    #                         for df in [df_viz_data, df_unique_reports]:
+    #                             if 'Audit Group Number' in df.columns:
+    #                                 df['Audit Group Number'] = pd.to_numeric(df['Audit Group Number'], errors='coerce').fillna(0).astype(int)
+    #                             else:
+    #                                 df['Audit Group Number'] = 0
+    #                             df['Audit Group Number Str'] = df['Audit Group Number'].astype(str)
+                                
+    #                             if 'Audit Circle Number' in df.columns and df['Audit Circle Number'].notna().any() and pd.to_numeric(df['Audit Circle Number'], errors='coerce').notna().any():
+    #                                 df['Circle Number For Plot'] = pd.to_numeric(df['Audit Circle Number'], errors='coerce').fillna(0).astype(int)
+    #                             elif 'Audit Group Number' in df.columns and not df['Audit Group Number'].eq(0).all():
+    #                                 df['Circle Number For Plot'] = ((df['Audit Group Number'] - 1) // 3 + 1).astype(int)
+    #                             else:
+    #                                 df['Circle Number For Plot'] = 0
+    #                             df['Circle Number Str Plot'] = df['Circle Number For Plot'].astype(str)
+                                
+    #                             df['Category'] = df.get('Category', pd.Series(dtype='str')).fillna('Unknown')
+    #                             df['Trade Name'] = df.get('Trade Name', pd.Series(dtype='str')).fillna('Unknown Trade Name')
+    #                             df['Status of para'] = df.get('Status of para', pd.Series(dtype='str')).fillna('Unknown')
+    
+    #                         # --- Para Status Distribution (uses original full data) ---
+    #                         st.markdown("---")
+    #                         st.markdown("<h4>Para Status Distribution</h4>", unsafe_allow_html=True)
+    #                         if 'Status of para' in df_viz_data.columns and df_viz_data['Status of para'].nunique() > 1:
+    #                             viz_status_counts = df_viz_data['Status of para'].value_counts().reset_index()
+    #                             viz_status_counts.columns = ['Status of para', 'Count']
+    #                             viz_fig_status_dist = px.bar(viz_status_counts, x='Status of para', y='Count', text_auto=True, title="Distribution of Para Statuses", labels={'Status of para': '<b>Status</b>', 'Count': 'Number of Paras'})
+    #                             viz_fig_status_dist.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
+    #                             viz_fig_status_dist.update_traces(textposition='outside', marker_color='teal')
+    #                             st.plotly_chart(viz_fig_status_dist, use_container_width=True)
+    #                         else:
+    #                             st.info("Not enough data for 'Status of para' distribution chart.")
+    
+    #                         # --- Group-wise Performance (uses de-duplicated data and shows in Lakhs) ---
+    #                         st.markdown("---")
+    #                         st.markdown("<h4>Group-wise Performance</h4>", unsafe_allow_html=True)
+    #                         if 'Detection in Lakhs' in df_unique_reports.columns and (df_unique_reports['Audit Group Number'].nunique() > 1 or (df_unique_reports['Audit Group Number'].nunique() == 1 and df_unique_reports['Audit Group Number'].iloc[0] != 0)):
+    #                             viz_detection_data = df_unique_reports.groupby('Audit Group Number Str')['Detection in Lakhs'].sum().reset_index().sort_values(by='Detection in Lakhs', ascending=False).nlargest(5, 'Detection in Lakhs')
+    #                             if not viz_detection_data.empty:
+    #                                 st.write("**Top 5 Groups by Total Detection Amount (Lakhs Rs):**")
+    #                                 fig_det_grp = px.bar(viz_detection_data, x='Audit Group Number Str', y='Detection in Lakhs', text_auto='.2f', labels={'Detection in Lakhs': 'Total Detection (Lakhs Rs)', 'Audit Group Number Str': '<b>Audit Group</b>'})
+    #                                 fig_det_grp.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
+    #                                 fig_det_grp.update_traces(textposition='outside', marker_color='indianred')
+    #                                 st.plotly_chart(fig_det_grp, use_container_width=True)
+                            
+    #                         if 'Recovery in Lakhs' in df_unique_reports.columns and (df_unique_reports['Audit Group Number'].nunique() > 1 or (df_unique_reports['Audit Group Number'].nunique() == 1 and df_unique_reports['Audit Group Number'].iloc[0] != 0)):
+    #                             viz_recovery_data = df_unique_reports.groupby('Audit Group Number Str')['Recovery in Lakhs'].sum().reset_index().sort_values(by='Recovery in Lakhs', ascending=False).nlargest(5, 'Recovery in Lakhs')
+    #                             if not viz_recovery_data.empty:
+    #                                 st.write("**Top 5 Groups by Total Realisation Amount (Lakhs Rs):**")
+    #                                 fig_rec_grp = px.bar(viz_recovery_data, x='Audit Group Number Str', y='Recovery in Lakhs', text_auto='.2f', labels={'Recovery in Lakhs': 'Total Realisation (Lakhs Rs)', 'Audit Group Number Str': '<b>Audit Group</b>'})
+    #                                 fig_rec_grp.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
+    #                                 fig_rec_grp.update_traces(textposition='outside', marker_color='lightseagreen')
+    #                                 st.plotly_chart(fig_rec_grp, use_container_width=True)
+    
+    #                         # --- Circle-wise Performance (uses de-duplicated data and shows in Lakhs) ---
+    #                         st.markdown("---")
+    #                         st.markdown("<h4>Circle-wise Performance Metrics</h4>", unsafe_allow_html=True)
+    #                         if 'Circle Number Str Plot' in df_unique_reports and (df_unique_reports['Circle Number For Plot'].nunique() > 1 or (df_unique_reports['Circle Number For Plot'].nunique() == 1 and df_unique_reports['Circle Number For Plot'].iloc[0] != 0)):
+    #                             if 'Recovery in Lakhs' in df_unique_reports.columns:
+    #                                 recovery_per_circle_plot = df_unique_reports.groupby('Circle Number Str Plot')['Recovery in Lakhs'].sum().reset_index().sort_values(by='Recovery in Lakhs', ascending=False)
+    #                                 if not recovery_per_circle_plot.empty:
+    #                                     st.write("**Total Recovery Amount (Lakhs Rs) per Circle (Descending):**")
+    #                                     fig_rec_circle_plot = px.bar(recovery_per_circle_plot, x='Circle Number Str Plot', y='Recovery in Lakhs', text_auto='.2f', labels={'Recovery in Lakhs': 'Total Recovery (Lakhs Rs)', 'Circle Number Str Plot': '<b>Circle Number</b>'}, title="Circle-wise Total Recovery")
+    #                                     fig_rec_circle_plot.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
+    #                                     fig_rec_circle_plot.update_traces(textposition='outside', marker_color='goldenrod')
+    #                                     st.plotly_chart(fig_rec_circle_plot, use_container_width=True)
+    
+    #                             if 'Detection in Lakhs' in df_unique_reports.columns:
+    #                                 detection_per_circle_plot = df_unique_reports.groupby('Circle Number Str Plot')['Detection in Lakhs'].sum().reset_index().sort_values(by='Detection in Lakhs', ascending=False)
+    #                                 if not detection_per_circle_plot.empty:
+    #                                     st.write("**Total Detection Amount (Lakhs Rs) per Circle (Descending):**")
+    #                                     fig_det_circle_plot = px.bar(detection_per_circle_plot, x='Circle Number Str Plot', y='Detection in Lakhs', text_auto='.2f', labels={'Detection in Lakhs': 'Total Detection (Lakhs Rs)', 'Circle Number Str Plot': '<b>Circle Number</b>'}, title="Circle-wise Total Detection")
+    #                                     fig_det_circle_plot.update_layout(xaxis_title_font_size=14, yaxis_title_font_size=14, xaxis_tickfont_size=12, yaxis_tickfont_size=12, xaxis_type='category')
+    #                                     fig_det_circle_plot.update_traces(textposition='outside', marker_color='mediumseagreen')
+    #                                     st.plotly_chart(fig_det_circle_plot, use_container_width=True)
+    
+    #                         # --- Treemap Visualizations (uses de-duplicated data and shows in Lakhs) ---
+    #                         st.markdown("---")
+    #                         st.markdown("<h4>Detection and Recovery Treemaps by Trade Name</h4>", unsafe_allow_html=True)
+    #                         if 'Detection in Lakhs' in df_unique_reports.columns:
+    #                             viz_df_detection_treemap = df_unique_reports[df_unique_reports['Detection in Lakhs'] > 0]
+    #                             if not viz_df_detection_treemap.empty:
+    #                                 st.write("**Detection Amounts (Lakhs Rs) by Trade Name (Size: Amount, Color: Category)**")
+    #                                 viz_fig_treemap_detection = px.treemap(viz_df_detection_treemap, path=[px.Constant("All Detections"), 'Category', 'Trade Name'], values='Detection in Lakhs', color='Category', hover_name='Trade Name', custom_data=['Audit Group Number Str', 'Trade Name'], color_discrete_map={'Large': 'rgba(230, 57, 70, 0.8)', 'Medium': 'rgba(241, 196, 15, 0.8)', 'Small': 'rgba(26, 188, 156, 0.8)', 'Unknown': 'rgba(149, 165, 166, 0.7)'})
+    #                                 viz_fig_treemap_detection.update_layout(margin=dict(t=30, l=10, r=10, b=10))
+    #                                 viz_fig_treemap_detection.data[0].textinfo = 'label+value'
+    #                                 viz_fig_treemap_detection.update_traces(hovertemplate="<b>%{customdata[1]}</b><br>Category: %{parent}<br>Audit Group: %{customdata[0]}<br>Detection: %{value:,.2f} Lakhs Rs<extra></extra>")
+    #                                 st.plotly_chart(viz_fig_treemap_detection, use_container_width=True)
+    
+    #                         if 'Recovery in Lakhs' in df_unique_reports.columns:
+    #                             viz_df_recovery_treemap = df_unique_reports[df_unique_reports['Recovery in Lakhs'] > 0]
+    #                             if not viz_df_recovery_treemap.empty:
+    #                                 st.write("**Recovery Amounts (Lakhs Rs) by Trade Name (Size: Amount, Color: Category)**")
+    #                                 viz_fig_treemap_recovery = px.treemap(viz_df_recovery_treemap, path=[px.Constant("All Recoveries"), 'Category', 'Trade Name'], values='Recovery in Lakhs', color='Category', hover_name='Trade Name', custom_data=['Audit Group Number Str', 'Trade Name'], color_discrete_map={'Large': 'rgba(230, 57, 70, 0.8)', 'Medium': 'rgba(241, 196, 15, 0.8)', 'Small': 'rgba(26, 188, 156, 0.8)', 'Unknown': 'rgba(149, 165, 166, 0.7)'})
+    #                                 viz_fig_treemap_recovery.update_layout(margin=dict(t=30, l=10, r=10, b=10))
+    #                                 viz_fig_treemap_recovery.data[0].textinfo = 'label+value'
+    #                                 viz_fig_treemap_recovery.update_traces(hovertemplate="<b>%{customdata[1]}</b><br>Category: %{parent}<br>Audit Group: %{customdata[0]}<br>Recovery: %{value:,.2f} Lakhs Rs<extra></extra>")
+    #                                 st.plotly_chart(viz_fig_treemap_recovery, use_container_width=True)
+    
+    #                         # --- Para-wise Performance (uses original full data) ---
+    #                         st.markdown("---")
+    #                         st.markdown("<h4>Para-wise Performance</h4>", unsafe_allow_html=True)
+    #                         if 'num_paras_to_show_pco' not in st.session_state:
+    #                             st.session_state.num_paras_to_show_pco = 5
+    #                         viz_n_paras_input = st.text_input("Enter N for Top N Paras (e.g., 5):", value=str(st.session_state.num_paras_to_show_pco), key="pco_n_paras_input_final_v2")
+    #                         viz_num_paras_show = st.session_state.num_paras_to_show_pco
+    #                         try:
+    #                             viz_parsed_n = int(viz_n_paras_input)
+    #                             if viz_parsed_n < 1:
+    #                                 viz_num_paras_show = 5
+    #                                 st.warning("N must be positive. Showing Top 5.", icon="⚠️")
+    #                             elif viz_parsed_n > 50:
+    #                                 viz_num_paras_show = 50
+    #                                 st.warning("N capped at 50. Showing Top 50.", icon="⚠️")
+    #                             else:
+    #                                 viz_num_paras_show = viz_parsed_n
+    #                             st.session_state.num_paras_to_show_pco = viz_num_paras_show
+    #                         except ValueError:
+    #                             if viz_n_paras_input != str(st.session_state.num_paras_to_show_pco):
+    #                                 st.warning(f"Invalid N ('{viz_n_paras_input}'). Using: {viz_num_paras_show}", icon="⚠️")
+                            
+    #                         viz_df_paras_only = df_viz_data[df_viz_data['Audit Para Number'].notna() & (~df_viz_data['Audit Para Heading'].astype(str).isin(["N/A - Header Info Only (Add Paras Manually)", "Manual Entry Required", "Manual Entry - PDF Error", "Manual Entry - PDF Upload Failed"]))]
+    #                         if 'Revenue Involved (Lakhs Rs)' in viz_df_paras_only.columns:
+    #                             viz_top_det_paras = viz_df_paras_only.nlargest(viz_num_paras_show, 'Revenue Involved (Lakhs Rs)')
+    #                             if not viz_top_det_paras.empty:
+    #                                 st.write(f"**Top {viz_num_paras_show} Detection Paras (by Revenue Involved):**")
+    #                                 viz_disp_cols_det = ['Audit Group Number Str', 'Trade Name', 'Audit Para Number', 'Audit Para Heading', 'Revenue Involved (Lakhs Rs)', 'Status of para']
+    #                                 viz_existing_cols_det = [c for c in viz_disp_cols_det if c in viz_top_det_paras.columns]
+    #                                 st.dataframe(viz_top_det_paras[viz_existing_cols_det].rename(columns={'Audit Group Number Str': 'Audit Group'}), use_container_width=True)
+    #                         if 'Revenue Recovered (Lakhs Rs)' in viz_df_paras_only.columns:
+    #                             viz_top_rec_paras = viz_df_paras_only.nlargest(viz_num_paras_show, 'Revenue Recovered (Lakhs Rs)')
+    #                             if not viz_top_rec_paras.empty:
+    #                                 st.write(f"**Top {viz_num_paras_show} Realisation Paras (by Revenue Recovered):**")
+    #                                 viz_disp_cols_rec = ['Audit Group Number Str', 'Trade Name', 'Audit Para Number', 'Audit Para Heading', 'Revenue Recovered (Lakhs Rs)', 'Status of para']
+    #                                 viz_existing_cols_rec = [c for c in viz_disp_cols_rec if c in viz_top_rec_paras.columns]
+    #                                 st.dataframe(viz_top_rec_paras[viz_existing_cols_rec].rename(columns={'Audit Group Number Str': 'Audit Group'}), use_container_width=True)
+    
+    #                     elif df_viz_data is None:
+    #                         st.error("Error reading data from spreadsheet for visualization.")
+    #                     else:
+    #                         st.info(f"No data in spreadsheet for {selected_viz_period_str_tab} to visualize.")
+    #                 elif not sheets_service and selected_viz_period_k_tab:
+    #                     st.error("Google Sheets service unavailable when trying to load visualization data.")
+    #                 elif not sheets_service and selected_viz_period_str_tab:
+    #                     st.error("Google Sheets service is not available.")
+    
+        #st.markdown("</div>", unsafe_allow_html=True)
     # # ========================== VISUALIZATIONS TAB ==========================
     # elif selected_tab == "Visualizations":
     #     st.markdown("<h3>Data Visualizations</h3>", unsafe_allow_html=True)
