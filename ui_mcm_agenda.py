@@ -16,6 +16,7 @@ from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 from reportlab.lib import colors
 from reportlab.lib.units import inch
 from PyPDF2 import PdfWriter, PdfReader 
+from reportlab.pdfgen import canvas
 
 from google_utils import read_from_spreadsheet
 from googleapiclient.http import MediaIoBaseDownload
@@ -37,7 +38,21 @@ def get_file_id_from_drive_url(url: str) -> str | None:
         if 'id' in query_params:
             return query_params['id'][0]
     return None
-
+    
+def create_page_number_stamp_pdf(buffer, page_num, total_pages):
+    """
+    Creates a PDF in memory with 'Page X of Y' at the bottom center.
+    This will be used as a "stamp" to overlay on existing pages.
+    """
+    c = canvas.Canvas(buffer, pagesize=A4)
+    c.setFont('Helvetica', 9)
+    c.setFillColor(colors.darkgrey)
+    # Draws the string 'Page X of Y' centered at the bottom of the page
+    c.drawCentredString(A4[0] / 2.0, 0.5 * inch, f"Page {page_num} of {total_pages}")
+    c.save()
+    buffer.seek(0)
+    return buffer
+    
 # --- PDF Generation Functions ---
 def create_cover_page_pdf(buffer, title_text, subtitle_text):
     doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=1.5*inch, bottomMargin=1.5*inch, leftMargin=1*inch, rightMargin=1*inch)
@@ -401,7 +416,30 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                             ph_b.seek(0)
                             final_pdf_merger.append(PdfReader(ph_b))
                         progress_bar.progress(current_pdf_step / total_steps_for_pdf)
-        
+                        
+                    # --- NEW: Add Page Numbers before Finalizing ---
+                    status_message_area.info("Adding page numbers to the document...")
+                    
+                    # Get the total number of pages in the merged document
+                    total_pages_final = len(final_pdf_merger.pages)
+
+                    # Loop through each page of the merged PDF
+                    for i in range(total_pages_final):
+                        # Get a specific page
+                        page_to_stamp = final_pdf_merger.pages[i]
+                        
+                        # Create a new "stamp" PDF for the current page number
+                        stamp_buffer = BytesIO()
+                        create_page_number_stamp_pdf(stamp_buffer, i + 1, total_pages_final) # Use i + 1 for human-readable page numbers (1, 2, 3...)
+                        
+                        # Read the stamp PDF
+                        stamp_reader = PdfReader(stamp_buffer)
+                        stamp_page = stamp_reader.pages[0]
+                        
+                        # Merge the stamp onto the original page
+                        page_to_stamp.merge_page(stamp_page)
+
+                    # --- End of New Page Numbering Logic ---
                     # Step 6: Finalize PDF
                     current_pdf_step += 1
                     status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Finalizing PDF...")
