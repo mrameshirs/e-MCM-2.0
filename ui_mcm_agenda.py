@@ -275,12 +275,12 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                     
                     # Get unique DARs, sorted for consistent processing order
                     unique_dars_to_process = df_for_pdf.sort_values(by=[circle_col_to_use, 'Trade Name', 'DAR PDF URL']).drop_duplicates(subset=['DAR PDF URL'])
-                    # ===================================================================
-                    # --- TEST CODE: Limit to 3 DARs for faster testing ---
-                    st.info("ℹ️ TEST MODE: Compiling only the first 3 DARs found.")
-                    unique_dars_to_process = unique_dars_to_process.head(3)
-                    # --- END TEST CODE ---
-                    # ===================================================================
+                    # # ===================================================================
+                    # # --- TEST CODE: Limit to 3 DARs for faster testing ---
+                    # st.info("ℹ️ TEST MODE: Compiling only the first 3 DARs found.")
+                    # unique_dars_to_process = unique_dars_to_process.head(3)
+                    # # --- END TEST CODE ---
+                    # # ===================================================================
                     
                     total_dars = len(unique_dars_to_process)
                     
