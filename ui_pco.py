@@ -186,92 +186,92 @@ def pco_dashboard(drive_service, sheets_service):
                         else:
                             st.error("Incorrect password.")
     # ========================== VIEW UPLOADED REPORTS TAB ==========================
-elif selected_tab == "View Uploaded Reports":
-    st.markdown("<h3>View Uploaded Reports Summary</h3>", unsafe_allow_html=True)
-    all_periods_for_view = mcm_periods.copy()
-    if not all_periods_for_view:
-        st.info("No MCM periods to view reports for.")
-    else:
-        period_options_list_view = [f"{p.get('month_name')} {p.get('year')}" for k, p in sorted(all_periods_for_view.items(), key=lambda x: x[0], reverse=True) if p.get('month_name') and p.get('year')]
-        if not period_options_list_view and all_periods_for_view:
-            st.warning("No valid MCM periods with complete month/year info found.")
-        elif not period_options_list_view:
-            st.info("No MCM periods available.")
+    elif selected_tab == "View Uploaded Reports":
+        st.markdown("<h3>View Uploaded Reports Summary</h3>", unsafe_allow_html=True)
+        all_periods_for_view = mcm_periods.copy()
+        if not all_periods_for_view:
+            st.info("No MCM periods to view reports for.")
         else:
-            selected_period_str_view = st.selectbox("Select MCM Period", options=period_options_list_view, key="pco_view_reports_sel_final_v2")
-            if selected_period_str_view:
-                selected_period_k_for_view = next((k for k, p in all_periods_for_view.items() if f"{p.get('month_name')} {p.get('year')}" == selected_period_str_view), None)
-                if selected_period_k_for_view and sheets_service:
-                    sheet_id_for_report_view = all_periods_for_view[selected_period_k_for_view]['spreadsheet_id']
-                    with st.spinner("Loading data from Google Sheet..."):
-                        df_report_data = read_from_spreadsheet(sheets_service, sheet_id_for_report_view)
-                    if df_report_data is not None and not df_report_data.empty:
-                        # --- SECTION 1: DISPLAY ALL EXISTING SUMMARY REPORTS ---
-                        st.markdown("<h4>Summary of Uploads:</h4>", unsafe_allow_html=True)
-                        if 'Audit Group Number' in df_report_data.columns:
-                            try:
-                                df_report_data['Audit Group Number Numeric'] = pd.to_numeric(df_report_data['Audit Group Number'], errors='coerce')
-                                df_summary_reports = df_report_data.dropna(subset=['Audit Group Number Numeric'])
-                                
-                                # Report 1: DARs per Group
-                                dars_per_group_rep = df_summary_reports.groupby('Audit Group Number Numeric')['DAR PDF URL'].nunique().reset_index(name='DARs Uploaded')
-                                st.write("**DARs Uploaded per Audit Group:**")
-                                st.dataframe(dars_per_group_rep, use_container_width=True)
-                                
-                                # Report 2: Paras per Group
-                                paras_per_group_rep = df_summary_reports.groupby('Audit Group Number Numeric').size().reset_index(name='Total Para Entries')
-                                st.write("**Total Para Entries per Audit Group:**")
-                                st.dataframe(paras_per_group_rep, use_container_width=True)
-                                
-                                # Report 3: DARs per Circle
-                                if 'Audit Circle Number' in df_report_data.columns:
-                                    df_summary_reports['Audit Circle Number Numeric'] = pd.to_numeric(df_summary_reports['Audit Circle Number'], errors='coerce')
-                                    dars_per_circle_rep = df_summary_reports.dropna(subset=['Audit Circle Number Numeric']).groupby('Audit Circle Number Numeric')['DAR PDF URL'].nunique().reset_index(name='DARs Uploaded')
-                                    st.write("**DARs Uploaded per Audit Circle:**")
-                                    st.dataframe(dars_per_circle_rep, use_container_width=True)
+            period_options_list_view = [f"{p.get('month_name')} {p.get('year')}" for k, p in sorted(all_periods_for_view.items(), key=lambda x: x[0], reverse=True) if p.get('month_name') and p.get('year')]
+            if not period_options_list_view and all_periods_for_view:
+                st.warning("No valid MCM periods with complete month/year info found.")
+            elif not period_options_list_view:
+                st.info("No MCM periods available.")
+            else:
+                selected_period_str_view = st.selectbox("Select MCM Period", options=period_options_list_view, key="pco_view_reports_sel_final_v2")
+                if selected_period_str_view:
+                    selected_period_k_for_view = next((k for k, p in all_periods_for_view.items() if f"{p.get('month_name')} {p.get('year')}" == selected_period_str_view), None)
+                    if selected_period_k_for_view and sheets_service:
+                        sheet_id_for_report_view = all_periods_for_view[selected_period_k_for_view]['spreadsheet_id']
+                        with st.spinner("Loading data from Google Sheet..."):
+                            df_report_data = read_from_spreadsheet(sheets_service, sheet_id_for_report_view)
+                        if df_report_data is not None and not df_report_data.empty:
+                            # --- SECTION 1: DISPLAY ALL EXISTING SUMMARY REPORTS ---
+                            st.markdown("<h4>Summary of Uploads:</h4>", unsafe_allow_html=True)
+                            if 'Audit Group Number' in df_report_data.columns:
+                                try:
+                                    df_report_data['Audit Group Number Numeric'] = pd.to_numeric(df_report_data['Audit Group Number'], errors='coerce')
+                                    df_summary_reports = df_report_data.dropna(subset=['Audit Group Number Numeric'])
                                     
-                                # Report 4: Para Status
-                                if 'Status of para' in df_report_data.columns:
-                                    status_summary_rep = df_summary_reports['Status of para'].value_counts().reset_index(name='Count')
-                                    status_summary_rep.columns = ['Status of para', 'Count']
-                                    st.write("**Para Status Summary:**")
-                                    st.dataframe(status_summary_rep, use_container_width=True)
-                                
-                                st.markdown("<hr>", unsafe_allow_html=True)
-                                
-                                # --- SECTION 2: EDIT AND SAVE DETAILED DATA ---
-                                st.markdown("<h4>Edit Detailed Data</h4>", unsafe_allow_html=True)
-                                st.info("You can edit data in the table below. Click 'Save Changes' to update the source spreadsheet.", icon="✍️")
-
-                                edited_df = st.data_editor(
-                                    df_report_data,
-                                    use_container_width=True,
-                                    hide_index=True,
-                                    num_rows="dynamic",
-                                    key=f"editor_{selected_period_k_for_view}"
-                                )
-
-                                if st.button("Save Changes to Spreadsheet", type="primary"):
-                                    with st.spinner("Saving changes to Google Sheet..."):
-                                        success = update_spreadsheet_from_df(sheets_service, sheet_id_for_report_view, edited_df)
-                                        if success:
-                                            st.success("Changes saved successfully!")
-                                            time.sleep(1)
-                                            st.rerun()
-                                        else:
-                                            st.error("Failed to save changes. Please check the error message above.")
-
-                            except Exception as e_rep_sum:
-                                st.error(f"Error processing summary: {e_rep_sum}")
+                                    # Report 1: DARs per Group
+                                    dars_per_group_rep = df_summary_reports.groupby('Audit Group Number Numeric')['DAR PDF URL'].nunique().reset_index(name='DARs Uploaded')
+                                    st.write("**DARs Uploaded per Audit Group:**")
+                                    st.dataframe(dars_per_group_rep, use_container_width=True)
+                                    
+                                    # Report 2: Paras per Group
+                                    paras_per_group_rep = df_summary_reports.groupby('Audit Group Number Numeric').size().reset_index(name='Total Para Entries')
+                                    st.write("**Total Para Entries per Audit Group:**")
+                                    st.dataframe(paras_per_group_rep, use_container_width=True)
+                                    
+                                    # Report 3: DARs per Circle
+                                    if 'Audit Circle Number' in df_report_data.columns:
+                                        df_summary_reports['Audit Circle Number Numeric'] = pd.to_numeric(df_summary_reports['Audit Circle Number'], errors='coerce')
+                                        dars_per_circle_rep = df_summary_reports.dropna(subset=['Audit Circle Number Numeric']).groupby('Audit Circle Number Numeric')['DAR PDF URL'].nunique().reset_index(name='DARs Uploaded')
+                                        st.write("**DARs Uploaded per Audit Circle:**")
+                                        st.dataframe(dars_per_circle_rep, use_container_width=True)
+                                        
+                                    # Report 4: Para Status
+                                    if 'Status of para' in df_report_data.columns:
+                                        status_summary_rep = df_summary_reports['Status of para'].value_counts().reset_index(name='Count')
+                                        status_summary_rep.columns = ['Status of para', 'Count']
+                                        st.write("**Para Status Summary:**")
+                                        st.dataframe(status_summary_rep, use_container_width=True)
+                                    
+                                    st.markdown("<hr>", unsafe_allow_html=True)
+                                    
+                                    # --- SECTION 2: EDIT AND SAVE DETAILED DATA ---
+                                    st.markdown("<h4>Edit Detailed Data</h4>", unsafe_allow_html=True)
+                                    st.info("You can edit data in the table below. Click 'Save Changes' to update the source spreadsheet.", icon="✍️")
+    
+                                    edited_df = st.data_editor(
+                                        df_report_data,
+                                        use_container_width=True,
+                                        hide_index=True,
+                                        num_rows="dynamic",
+                                        key=f"editor_{selected_period_k_for_view}"
+                                    )
+    
+                                    if st.button("Save Changes to Spreadsheet", type="primary"):
+                                        with st.spinner("Saving changes to Google Sheet..."):
+                                            success = update_spreadsheet_from_df(sheets_service, sheet_id_for_report_view, edited_df)
+                                            if success:
+                                                st.success("Changes saved successfully!")
+                                                time.sleep(1)
+                                                st.rerun()
+                                            else:
+                                                st.error("Failed to save changes. Please check the error message above.")
+    
+                                except Exception as e_rep_sum:
+                                    st.error(f"Error processing summary: {e_rep_sum}")
+                            else:
+                                st.warning("Missing 'Audit Group Number' column for summary.")
+                                st.dataframe(df_report_data, use_container_width=True)
+                        elif df_report_data is None:
+                            st.error("Could not load data from the spreadsheet.")
                         else:
-                            st.warning("Missing 'Audit Group Number' column for summary.")
-                            st.dataframe(df_report_data, use_container_width=True)
-                    elif df_report_data is None:
-                        st.error("Could not load data from the spreadsheet.")
-                    else:
-                        st.info(f"No data in spreadsheet for {selected_period_str_view}.")
-                elif not sheets_service:
-                    st.error("Google Sheets service not available.")
+                            st.info(f"No data in spreadsheet for {selected_period_str_view}.")
+                    elif not sheets_service:
+                        st.error("Google Sheets service not available.")
     # # ========================== VIEW UPLOADED REPORTS TAB ==========================
     # elif selected_tab == "View Uploaded Reports":
     #     st.markdown("<h3>View Uploaded Reports Summary</h3>", unsafe_allow_html=True)
