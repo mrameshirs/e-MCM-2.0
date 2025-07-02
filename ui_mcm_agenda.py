@@ -417,30 +417,30 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                             final_pdf_merger.append(PdfReader(ph_b))
                         progress_bar.progress(current_pdf_step / total_steps_for_pdf)
                         
-                    # --- NEW: Add Page Numbers before Finalizing ---
-                    status_message_area.info("Adding page numbers to the document...")
+                    # # --- NEW: Add Page Numbers before Finalizing ---
+                    # status_message_area.info("Adding page numbers to the document...")
                     
-                    # Get the total number of pages in the merged document
-                    total_pages_final = len(final_pdf_merger.pages)
+                    # # Get the total number of pages in the merged document
+                    # total_pages_final = len(final_pdf_merger.pages)
 
-                    # Loop through each page of the merged PDF
-                    for i in range(total_pages_final):
-                        # Get a specific page
-                        page_to_stamp = final_pdf_merger.pages[i]
+                    # # Loop through each page of the merged PDF
+                    # for i in range(total_pages_final):
+                    #     # Get a specific page
+                    #     page_to_stamp = final_pdf_merger.pages[i]
                         
-                        # Create a new "stamp" PDF for the current page number
-                        stamp_buffer = BytesIO()
-                        create_page_number_stamp_pdf(stamp_buffer, i + 1, total_pages_final) # Use i + 1 for human-readable page numbers (1, 2, 3...)
+                    #     # Create a new "stamp" PDF for the current page number
+                    #     stamp_buffer = BytesIO()
+                    #     create_page_number_stamp_pdf(stamp_buffer, i + 1, total_pages_final) # Use i + 1 for human-readable page numbers (1, 2, 3...)
                         
-                        # Read the stamp PDF
-                        stamp_reader = PdfReader(stamp_buffer)
-                        stamp_page = stamp_reader.pages[0]
+                    #     # Read the stamp PDF
+                    #     stamp_reader = PdfReader(stamp_buffer)
+                    #     stamp_page = stamp_reader.pages[0]
                         
-                        # Merge the stamp onto the original page
-                        page_to_stamp.merge_page(stamp_page)
-                        #page_to_stamp.merge_layered_page(stamp_page, expand=False)
+                    #     # Merge the stamp onto the original page
+                    #     page_to_stamp.merge_page(stamp_page)
+                    #     #page_to_stamp.merge_layered_page(stamp_page, expand=False)
 
-                    # --- End of New Page Numbering Logic ---
+                    # # --- End of New Page Numbering Logic ---
                     # Step 6: Finalize PDF
                     current_pdf_step += 1
                     status_message_area.info(f"Step {current_pdf_step}/{total_steps_for_pdf}: Finalizing PDF...")
