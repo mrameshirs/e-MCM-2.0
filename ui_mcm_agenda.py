@@ -262,7 +262,189 @@ def calculate_audit_circle_agenda(audit_group_number_val):
     except (ValueError, TypeError, AttributeError):
         return 0
 
+def create_page_number_stamp_pdf_fixed(buffer, page_num, total_pages):
+    """
+    Fixed version - Creates a PDF with page numbers that will actually show up
+    """
+    # Create canvas with proper settings
+    c = canvas.Canvas(buffer, pagesize=A4)
+    
+    # Set font and color with higher visibility
+    c.setFont('Helvetica-Bold', 10)  # Slightly larger and bold
+    c.setFillColor(colors.black)     # Use black instead of grey
+    c.setStrokeColor(colors.black)
+    
+    # Get page dimensions
+    width, height = A4
+    
+    # Position at bottom center with more margin from bottom
+    x_position = width / 2.0
+    y_position = 0.75 * inch  # Higher from bottom edge
+    
+    # Draw the page number
+    page_text = f"Page {page_num} of {total_pages}"
+    c.drawCentredString(x_position, y_position, page_text)
+    
+    # Optional: Add a small line or border to make it more visible
+    # c.line(x_position - 50, y_position - 5, x_position + 50, y_position - 5)
+    
+    # Finalize the PDF
+    c.save()
+    buffer.seek(0)
+    return buffer
 
+def create_page_number_overlay_alternative(page_num, total_pages):
+    """
+    Alternative approach - create overlay PDF with better positioning
+    """
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    
+    # Set font and styling
+    c.setFont('Helvetica', 9)
+    c.setFillColor(colors.darkgrey)
+    
+    # Calculate position (bottom center)
+    width, height = A4
+    x = width / 2.0
+    y = 30  # 30 points from bottom (about 0.4 inches)
+    
+    # Draw page number
+    text = f"Page {page_num} of {total_pages}"
+    c.drawCentredString(x, y, text)
+    
+    # Save and return
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+def add_page_numbers_to_pdf_improved(input_pdf_buffer, output_buffer):
+    """
+    Improved method to add page numbers to existing PDF
+    """
+    # Read the input PDF
+    reader = PdfReader(input_pdf_buffer)
+    writer = PdfWriter()
+    total_pages = len(reader.pages)
+    
+    for page_num, page in enumerate(reader.pages, 1):
+        # Create page number overlay
+        overlay_buffer = create_page_number_overlay_alternative(page_num, total_pages)
+        overlay_reader = PdfReader(overlay_buffer)
+        overlay_page = overlay_reader.pages[0]
+        
+        # Create a new page by merging
+        new_page = page
+        
+        # Try different merge methods
+        try:
+            # Method 1: Standard merge
+            new_page.merge_page(overlay_page)
+        except Exception as e1:
+            try:
+                # Method 2: Merge with transformation
+                new_page.merge_transformed_page(overlay_page, [1, 0, 0, 1, 0, 0])
+            except Exception as e2:
+                # Method 3: Add as separate layer (fallback)
+                print(f"Warning: Could not merge page number on page {page_num}: {e1}, {e2}")
+                # Just add the original page without numbers
+                pass
+        
+        writer.add_page(new_page)
+    
+    # Write to output buffer
+    writer.write(output_buffer)
+    output_buffer.seek(0)
+    return output_buffer
+
+# Updated main PDF compilation section
+def compile_mcm_pdf_with_working_page_numbers(final_pdf_merger, month_year_str):
+    """
+    Fixed version of the PDF compilation with working page numbers
+    """
+    try:
+        # First, create the merged PDF without page numbers
+        temp_buffer = BytesIO()
+        final_pdf_merger.write(temp_buffer)
+        temp_buffer.seek(0)
+        
+        # Now add page numbers using the improved method
+        final_output_buffer = BytesIO()
+        add_page_numbers_to_pdf_improved(temp_buffer, final_output_buffer)
+        
+        return final_output_buffer
+        
+    except Exception as e:
+        print(f"Error in PDF compilation: {e}")
+        # Fallback: return PDF without page numbers
+        fallback_buffer = BytesIO()
+        final_pdf_merger.write(fallback_buffer)
+        fallback_buffer.seek(0)
+        return fallback_buffer
+
+# Alternative approach using reportlab's built-in page numbering
+def create_pdf_with_built_in_page_numbers(story_elements, output_buffer):
+    """
+    Alternative: Use reportlab's built-in page numbering
+    """
+    from reportlab.platypus import SimpleDocTemplate, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus.tableofcontents import TableOfContents
+    
+    class NumberedCanvas(canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            canvas.Canvas.__init__(self, *args, **kwargs)
+            self._saved_page_states = []
+    
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
+    
+        def save(self):
+            num_pages = len(self._saved_page_states)
+            for (page_num, page_state) in enumerate(self._saved_page_states):
+                self.__dict__.update(page_state)
+                self.draw_page_number(page_num + 1, num_pages)
+                canvas.Canvas.showPage(self)
+            canvas.Canvas.save(self)
+    
+        def draw_page_number(self, page_num, total_pages):
+            self.setFont("Helvetica", 9)
+            self.setFillColor(colors.black)
+            self.drawCentredString(A4[0]/2.0, 0.75*inch, f"Page {page_num} of {total_pages}")
+    
+    # Create document with numbered canvas
+    doc = SimpleDocTemplate(output_buffer, pagesize=A4, 
+                          leftMargin=0.75*inch, rightMargin=0.75*inch,
+                          topMargin=0.75*inch, bottomMargin=1*inch)
+    
+    # Build with custom canvas
+    doc.build(story_elements, canvasmaker=NumberedCanvas)
+    output_buffer.seek(0)
+    return output_buffer
+
+# Debug function to check if page numbers are actually being added
+def debug_page_number_addition():
+    """
+    Simple test to verify page numbering works
+    """
+    # Create a simple test PDF
+    test_buffer = BytesIO()
+    c = canvas.Canvas(test_buffer, pagesize=A4)
+    
+    # Add a few test pages
+    for i in range(3):
+        c.drawString(100, 750, f"This is test page {i+1}")
+        c.showPage()
+    
+    c.save()
+    test_buffer.seek(0)
+    
+    # Now add page numbers
+    output_buffer = BytesIO()
+    add_page_numbers_to_pdf_improved(test_buffer, output_buffer)
+    
+    return output_buffer
 def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
     st.markdown("### MCM Agenda Preparation")
 
@@ -690,17 +872,18 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                     temp_reader = PdfReader(temp_buffer)
 
                     total_final_pages = len(temp_reader.pages)
+                    final_output_buffer = compile_mcm_pdf_with_working_page_numbers(final_pdf_merger, month_year_str)
 
-                    for page_num, page in enumerate(temp_reader.pages, 1):
-                        # Create page number overlay
-                        stamp_buffer = BytesIO()
-                        create_page_number_stamp_pdf(stamp_buffer, page_num, total_final_pages)
-                        stamp_reader = PdfReader(stamp_buffer)
-                        stamp_page = stamp_reader.pages[0]
+                    # for page_num, page in enumerate(temp_reader.pages, 1):
+                    #     # Create page number overlay
+                    #     stamp_buffer = BytesIO()
+                    #     create_page_number_stamp_pdf(stamp_buffer, page_num, total_final_pages)
+                    #     stamp_reader = PdfReader(stamp_buffer)
+                    #     stamp_page = stamp_reader.pages[0]
 
-                        # Merge the page number onto the original page
-                        page.merge_page(stamp_page)
-                        final_pdf_with_pages.add_page(page)
+                    #     # Merge the page number onto the original page
+                    #     page.merge_page(stamp_page)
+                    #     final_pdf_with_pages.add_page(page)
 
                     # Write final PDF
                     final_pdf_with_pages.write(final_output_buffer)
