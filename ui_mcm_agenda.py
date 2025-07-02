@@ -437,7 +437,8 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                         stamp_page = stamp_reader.pages[0]
                         
                         # Merge the stamp onto the original page
-                        page_to_stamp.merge_page(stamp_page)
+                        #page_to_stamp.merge_page(stamp_page)
+                        page_to_stamp.merge_layered_page(stamp_page, expand=False)
 
                     # --- End of New Page Numbering Logic ---
                     # Step 6: Finalize PDF
