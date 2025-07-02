@@ -1613,6 +1613,7 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
         st.info(f"No data found in the spreadsheet for {month_year_str}.")
     else:
         # Ensure correct data types for key columns
+        st.dataframe(df_period_data_full.head()) # DEBUG LINE
         cols_to_convert_numeric = ['Audit Group Number', 'Audit Circle Number', 'Total Amount Detected (Overall Rs)',
                                    'Total Amount Recovered (Overall Rs)', 'Audit Para Number',
                                    'Revenue Involved (Lakhs Rs)', 'Revenue Recovered (Lakhs Rs)']
