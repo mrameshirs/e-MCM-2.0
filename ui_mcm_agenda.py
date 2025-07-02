@@ -1081,7 +1081,6 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
     st.markdown(f"<h2 style='text-align: center; color: #007bff; font-size: 22pt; margin-bottom:10px;'>MCM Audit Paras for {month_year_str}</h2>", unsafe_allow_html=True)
     st.markdown("---")
 
-    # --- Data Loading using Session State ---
     if 'df_period_data' not in st.session_state or st.session_state.get('current_period_key') != selected_period_key:
         with st.spinner(f"Loading data for {month_year_str}..."):
             df = read_from_spreadsheet(sheets_service, selected_period_info['spreadsheet_id'])
@@ -1108,7 +1107,6 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
         st.info(f"No data available for {month_year_str}.")
         return
 
-    # --- Code to derive Audit Circle and set up UI loops ---
     circle_col_to_use = 'Audit Circle Number'
     if 'Audit Circle Number' not in df_period_data_full.columns or not df_period_data_full['Audit Circle Number'].notna().any() or not pd.to_numeric(df_period_data_full['Audit Circle Number'], errors='coerce').fillna(0).astype(int).gt(0).any():
         if 'Audit Group Number' in df_period_data_full.columns and df_period_data_full['Audit Group Number'].notna().any():
@@ -1180,13 +1178,15 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                             
                             st.markdown(f"<h5 style='font-size:13pt; margin-top:15px; color:#154360;'>Gist of Audit Paras & MCM Decisions for: {html.escape(trade_name_item)}</h5>", unsafe_allow_html=True)
                             
-                            # --- CSS FOR TEXT COLOR STYLING ---
+                            # --- CSS FOR COLUMN STYLING ---
                             st.markdown("""
                                 <style>
                                     .grid-header { font-weight: bold; background-color: #343a40; color: white; padding: 10px 5px; border-radius: 5px; text-align: center; }
                                     .revenue-number { font-weight: bold; }
-                                    .green-text { color: #1E8449; } /* Dark Green */
-                                    .blue-text { color: #2980B9; } /* Strong Blue */
+                                    .cell-style { padding: 8px 5px; margin: 2px 1px; border-radius: 5px; text-align: center; }
+                                    .detection-cell { background-color: #e8f5e9; } /* Light Green */
+                                    .recovery-cell { background-color: #e8f5e9; } /* Light Green */
+                                    .status-cell { background-color: #e3f2fd; } /* Light Blue */
                                 </style>
                             """, unsafe_allow_html=True)
 
@@ -1212,10 +1212,10 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                                     row_cols = st.columns(col_proportions)
                                     row_cols[0].write(para_num_str)
                                     row_cols[1].markdown(f"**{html.escape(str(row.get('Audit Para Heading', 'N/A')))}**")
-                                    # Apply colored text to cells
-                                    row_cols[2].markdown(f"<span class='revenue-number green-text'>{format_inr(det_rs)}</span>", unsafe_allow_html=True)
-                                    row_cols[3].markdown(f"<span class='revenue-number green-text'>{format_inr(rec_rs)}</span>", unsafe_allow_html=True)
-                                    row_cols[4].markdown(f"<span class='blue-text'>{status_text}</span>", unsafe_allow_html=True)
+                                    # Apply colored backgrounds to cells
+                                    row_cols[2].markdown(f"<div class='cell-style detection-cell'><span class='revenue-number'>{format_inr(det_rs)}</span></div>", unsafe_allow_html=True)
+                                    row_cols[3].markdown(f"<div class='cell-style recovery-cell'><span class='revenue-number'>{format_inr(rec_rs)}</span></div>", unsafe_allow_html=True)
+                                    row_cols[4].markdown(f"<div class='cell-style status-cell'>{status_text}</div>", unsafe_allow_html=True)
                                     
                                     decision_key = f"mcm_decision_{trade_name_item}_{para_num_str}_{index}"
                                     row_cols[5].selectbox("Decision", options=decision_options, index=default_index, key=decision_key, label_visibility="collapsed")
