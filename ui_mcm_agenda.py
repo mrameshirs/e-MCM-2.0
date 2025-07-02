@@ -1226,31 +1226,15 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
 
                             st.markdown("<br>", unsafe_allow_html=True)
                             
-                            # total_overall_detection, total_overall_recovery = 0, 0
-                            # if not df_trade_paras_item.empty:
-                            #     detection_val = df_trade_paras_item['Total Amount Detected (Overall Rs)'].iloc[0]
-                            #     recovery_val = df_trade_paras_item['Total Amount Recovered (Overall Rs)'].iloc[0]
-                            #     total_overall_detection = 0 if pd.isna(detection_val) else detection_val
-                            #     total_overall_recovery = 0 if pd.isna(recovery_val) else recovery_val
-                            # --- FIX FOR TOTALS AND DIAGNOSTIC MESSAGE ---
                             total_overall_detection, total_overall_recovery = 0, 0
                             if not df_trade_paras_item.empty:
                                 detection_val = df_trade_paras_item['Total Amount Detected (Overall Rs)'].iloc[0]
                                 recovery_val = df_trade_paras_item['Total Amount Recovered (Overall Rs)'].iloc[0]
-                                
-                                # --- TEMPORARY DIAGNOSTIC MESSAGE ---
-                                st.warning(f"DEBUG: Reading Detection Value = '{detection_val}' (Type: {type(detection_val)}), Recovery Value = '{recovery_val}' (Type: {type(recovery_val)})")
-                                
                                 total_overall_detection = 0 if pd.isna(detection_val) else detection_val
                                 total_overall_recovery = 0 if pd.isna(recovery_val) else recovery_val
-                            
-                            st.markdown(f"<p style='font-size: 1.2em;'><b>Total Detection for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_detection)}</b></p>", unsafe_allow_html=True)
-                            st.markdown(f"<p style='font-size: 1.2em;'><b>Total Recovery for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_recovery)}</b></p>", unsafe_allow_html=True)
-                            
-                            st.markdown("<br>", unsafe_allow_html=True) 
-                            
-                            st.markdown(f"<p style='font-size: 1.1em;'><b>Total Detection for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_detection)}</b></p>", unsafe_allow_html=True)
-                            st.markdown(f"<p style='font-size: 1.1em;'><b>Total Recovery for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_recovery)}</b></p>", unsafe_allow_html=True)
+                                                    
+                            st.markdown(f"<p style='font-size: 1.3em;'><b>Total Detection for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_detection)}</b></p>", unsafe_allow_html=True)
+                            st.markdown(f"<p style='font-size: 1.3em;'><b>Total Recovery for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_recovery)}</b></p>", unsafe_allow_html=True)
                             
                             st.markdown("<br>", unsafe_allow_html=True) 
                             
