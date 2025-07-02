@@ -491,46 +491,37 @@ from google_utils import update_spreadsheet_from_df
 # --- NEW HELPER FUNCTION FOR INDIAN NUMBERING ---
 def format_inr(n):
     """
-    Formats a number into the Indian numbering system (lakhs, crores).
+    Formats a number (including numpy types) into the Indian numbering system.
     """
-    if not isinstance(n, (int, float)):
-        return "0"
+    try:
+        # First, try to convert the input to a standard integer. This handles numpy types.
+        n = int(n)
+    except (ValueError, TypeError):
+        return "0" # If it can't be converted, return "0"
     
-    n = int(n)
     if n < 0:
         return '-' + format_inr(-n)
-    
     if n == 0:
         return "0"
     
     s = str(n)
-    
-    # Handle numbers with 3 digits or less
     if len(s) <= 3:
         return s
     
-    # Get the last 3 digits
     s_last_three = s[-3:]
     s_remaining = s[:-3]
     
-    # Split remaining digits into groups of 2 from right to left
     groups = []
     while len(s_remaining) > 2:
         groups.append(s_remaining[-2:])
         s_remaining = s_remaining[:-2]
     
-    # Add any remaining digits (1 or 2 digits)
     if s_remaining:
         groups.append(s_remaining)
     
-    # Reverse the groups to get correct order
     groups.reverse()
-    
-    # Join all groups with commas
     result = ','.join(groups) + ',' + s_last_three
-    
     return result
-
 # Helper function to extract File ID from Google Drive webViewLink
 def get_file_id_from_drive_url(url: str) -> str | None:
     if not url or not isinstance(url, str):
