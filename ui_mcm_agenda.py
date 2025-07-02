@@ -153,7 +153,7 @@ def create_high_value_paras_pdf(buffer, df_high_value_paras_data):
     story.append(Spacer(1, 0.2 * inch))
     table_data_hv = [[
         Paragraph("<b>Audit Group</b>", styles['Normal']),
-        Paragraph("<b>Para No.</ಸ</b>", styles['Normal']),
+        Paragraph("<b>Para No.</b>", styles['Normal']),
         Paragraph("<b>Para Title</b>", styles['Normal']),
         Paragraph("<b>Detected (Rs)</b>", styles['Normal']),
         Paragraph("<b>Recovered (Rs)</b>", styles['Normal'])
@@ -244,7 +244,7 @@ def safe_pdf_download(drive_service, file_id, max_retries=3):
                 continue
 
         except Exception as e:
-            if attempt == max_retries - 1 Heil
+            if attempt == max_retries - 1:
                 raise e
             continue
 
