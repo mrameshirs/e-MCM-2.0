@@ -7,14 +7,13 @@ import pandas as pd
 import plotly.express as px
 from streamlit_option_menu import option_menu
 import math  # For math.ceil if needed
-
 from ui_mcm_agenda import mcm_agenda_tab # <--- IMPORT THE NEW TAB FUNCTION
 
 
 # Assuming google_utils.py and config.py are in the same directory and correctly set up
 from google_utils import (
     load_mcm_periods, save_mcm_periods, create_drive_folder,
-    create_spreadsheet, read_from_spreadsheet
+    create_spreadsheet, read_from_spreadsheet,update_spreadsheet_from_df
 )
 from config import USER_CREDENTIALS, MCM_PERIODS_FILENAME_ON_DRIVE
 
