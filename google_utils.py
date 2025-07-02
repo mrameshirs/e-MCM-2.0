@@ -355,7 +355,7 @@ def read_from_spreadsheet(sheets_service, spreadsheet_id, sheet_name="Sheet1"):
 
         elif num_cols_in_header == num_cols_in_first_data_row:
             # Header is different from expected, but consistent with data. Use sheet's header.
-            st.warning(f"Spreadsheet header ({num_cols_in_header} cols) differs from expected ({len(expected_cols_header)} cols), but is consistent with data rows. Using header from sheet: {header_in_sheet}")
+            #st.warning(f"Spreadsheet header ({num_cols_in_header} cols) differs from expected ({len(expected_cols_header)} cols), but is consistent with data rows. Using header from sheet: {header_in_sheet}")
             return pd.DataFrame(data_rows, columns=header_in_sheet)
         else:
             # Significant mismatch, e.g. header is 12, data is 14.
