@@ -627,7 +627,21 @@ def calculate_audit_circle_agenda(audit_group_number_val):
 
 def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
     st.markdown("### MCM Agenda Preparation")
-
+    # --- CSS for Tab Styling ---
+    st.markdown("""
+        <style>
+            /* Make tab text bolder and larger */
+            button[data-testid="stTab"] {
+                font-size: 16px;
+                font-weight: 600;
+            }
+            /* Highlight the selected tab with a blue background and border */
+            button[data-testid="stTab"][aria-selected="true"] {
+                background-color: #e3f2fd;
+                border-bottom: 3px solid #007bff;
+            }
+        </style>
+    """, unsafe_allow_html=True)
     if not mcm_periods:
         st.warning("No MCM periods found. Please create them first via 'Create MCM Period' tab.")
         return
