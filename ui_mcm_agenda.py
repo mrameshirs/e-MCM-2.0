@@ -1232,11 +1232,18 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                                 recovery_val = df_trade_paras_item['Total Amount Recovered (Overall Rs)'].iloc[0]
                                 total_overall_detection = 0 if pd.isna(detection_val) else detection_val
                                 total_overall_recovery = 0 if pd.isna(recovery_val) else recovery_val
-                                                    
-                            st.markdown(f"<p style='font-size: 1.3em;'><b>Total Detection for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_detection)}</b></p>", unsafe_allow_html=True)
-                            st.markdown(f"<p style='font-size: 1.3em;'><b>Total Recovery for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_recovery)}</b></p>", unsafe_allow_html=True)
+                            # --- STYLED SUMMARY LINES ---
+                            detection_style = "background-color: #f8d7da; color: #721c24; font-weight: bold; padding: 10px; border-radius: 5px; font-size: 1.2em;"
+                            recovery_style = "background-color: #d4edda; color: #155724; font-weight: bold; padding: 10px; border-radius: 5px; font-size: 1.2em;"
                             
-                            st.markdown("<br>", unsafe_allow_html=True) 
+                            st.markdown(f"<p style='{detection_style}'>Total Detection for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_detection)}</p>", unsafe_allow_html=True)
+                            st.markdown(f"<p style='{recovery_style}'>Total Recovery for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_recovery)}</p>", unsafe_allow_html=True)
+                            
+                            st.markdown("<br>", unsafe_allow_html=True)                         
+                            # st.markdown(f"<p style='font-size: 1.3em;'><b>Total Detection for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_detection)}</b></p>", unsafe_allow_html=True)
+                            # st.markdown(f"<p style='font-size: 1.3em;'><b>Total Recovery for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_recovery)}</b></p>", unsafe_allow_html=True)
+                            
+                            # st.markdown("<br>", unsafe_allow_html=True) 
                             
                             if st.button("Save Decisions", key=f"save_decisions_{trade_name_item}", use_container_width=True, type="primary"):
                                 with st.spinner("Saving decisions..."):
