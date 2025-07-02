@@ -1201,8 +1201,7 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                             
                             st.markdown(f"<h5 style='font-size:13pt; margin-top:20px; color:#154360;'>Gist of Audit Paras & MCM Decisions for: {html.escape(trade_name_item)}</h5>", unsafe_allow_html=True)
                             
-                            st.markdown(f"<h5 style='font-size:13pt; margin-top:15px; color:#154360;'>Gist of Audit Paras & MCM Decisions for: {html.escape(trade_name_item)}</h5>", unsafe_allow_html=True)
-                            
+                             
                             # --- CSS FOR ALL STYLING ---
                             st.markdown("""
                                 <style>
