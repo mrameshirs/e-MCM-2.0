@@ -1169,6 +1169,37 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
 
                         if st.session_state.get(session_key_selected_trade) == trade_name_item:
                             df_trade_paras_item = df_current_grp_item[df_current_grp_item['Trade Name'] == trade_name_item].copy()
+                            # --- RESTORED: Category and GSTIN boxes ---
+                            taxpayer_category = "N/A"
+                            taxpayer_gstin = "N/A"
+                            if not df_trade_paras_item.empty:
+                                first_row = df_trade_paras_item.iloc[0]
+                                taxpayer_category = first_row.get('Category', 'N/A')
+                                taxpayer_gstin = first_row.get('GSTIN', 'N/A')
+                            
+                            category_color_map = {
+                                "Large": ("#f8d7da", "#721c24"),
+                                "Medium": ("#ffeeba", "#856404"),
+                                "Small": ("#d4edda", "#155724"),
+                                "N/A": ("#e2e3e5", "#383d41")
+                            }
+                            cat_bg_color, cat_text_color = category_color_map.get(taxpayer_category, ("#e2e3e5", "#383d41"))
+
+                            info_cols = st.columns(2)
+                            with info_cols[0]:
+                                st.markdown(f"""
+                                <div style="background-color: {cat_bg_color}; color: {cat_text_color}; padding: 4px 8px; border-radius: 5px; text-align: center; font-size: 0.9rem; margin-top: 5px;">
+                                    <b>Category:</b> {html.escape(str(taxpayer_category))}
+                                </div>
+                                """, unsafe_allow_html=True)
+                            with info_cols[1]:
+                                st.markdown(f"""
+                                <div style="background-color: #e9ecef; color: #495057; padding: 4px 8px; border-radius: 5px; text-align: center; font-size: 0.9rem; margin-top: 5px;">
+                                    <b>GSTIN:</b> {html.escape(str(taxpayer_gstin))}
+                                </div>
+                                """, unsafe_allow_html=True)
+                            
+                            st.markdown(f"<h5 style='font-size:13pt; margin-top:20px; color:#154360;'>Gist of Audit Paras & MCM Decisions for: {html.escape(trade_name_item)}</h5>", unsafe_allow_html=True)
                             
                             st.markdown(f"<h5 style='font-size:13pt; margin-top:15px; color:#154360;'>Gist of Audit Paras & MCM Decisions for: {html.escape(trade_name_item)}</h5>", unsafe_allow_html=True)
                             
