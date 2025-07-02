@@ -12,3 +12,4 @@ pydantic
 typing
 reportlab
 PyPDF2
+streamlit-aggrid
