@@ -2048,7 +2048,8 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
 
                             st.markdown("<hr style='border-top: 1px solid #ccc; margin-top:10px; margin-bottom:10px;'>", unsafe_allow_html=True)
         # --- Compile PDF Button ---
-        if st.button("Compile Full MCM Agenda PDF", key="compile_mcm_agenda_pdf_final_v4_progress", type="primary", help="Generates a comprehensive PDF.", use_container_width=True):
+        if st.button("Compile Full MCM Agenda PDF", key=f"compile_mcm_agenda_pdf_{selected_period_key}", type="primary", help="Generates a comprehensive PDF.", use_container_width=True):
+        #if st.button("Compile Full MCM Agenda PDF", key="compile_mcm_agenda_pdf_final_v4_progress", type="primary", help="Generates a comprehensive PDF.", use_container_width=True):
             if df_period_data_full.empty:
                 st.error("No data available for the selected MCM period to compile into PDF.")
             else:
