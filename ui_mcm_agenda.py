@@ -1465,20 +1465,41 @@ def format_inr(n):
     """
     if not isinstance(n, (int, float)):
         return "0"
+    
     n = int(n)
     if n < 0:
         return '-' + format_inr(-n)
+    
+    if n == 0:
+        return "0"
+    
     s = str(n)
+    
+    # Handle numbers with 3 digits or less
     if len(s) <= 3:
         return s
+    
+    # Get the last 3 digits
     s_last_three = s[-3:]
-    s_other_digits = s[:-3]
-    if len(s_other_digits) % 2 != 0:
-        s_other_digits = '0' + s_other_digits
-    res = ','.join([s_other_digits[i:i+2] for i in range(0, len(s_other_digits), 2)])
-    if res.startswith('0,'):
-        res = res[2:]
-    return res + ',' + s_last_three
+    s_remaining = s[:-3]
+    
+    # Split remaining digits into groups of 2 from right to left
+    groups = []
+    while len(s_remaining) > 2:
+        groups.append(s_remaining[-2:])
+        s_remaining = s_remaining[:-2]
+    
+    # Add any remaining digits (1 or 2 digits)
+    if s_remaining:
+        groups.append(s_remaining)
+    
+    # Reverse the groups to get correct order
+    groups.reverse()
+    
+    # Join all groups with commas
+    result = ','.join(groups) + ',' + s_last_three
+    
+    return result
 
 # Helper function to extract File ID from Google Drive webViewLink
 def get_file_id_from_drive_url(url: str) -> str | None:
@@ -1784,90 +1805,17 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                                     {total_row_html}
                                 </table>"""
                                 st.markdown(table_full_html, unsafe_allow_html=True)
-                                # Replace the problematic section with this debug version:
-
                                 total_overall_detection = 0
                                 total_overall_recovery = 0
                                 
-                                if not df_trade_paras_item.empty:
-                                    # Debug: Print the actual data to see what's happening
-                                    st.write("**DEBUG INFO:**")
-                                    st.write(f"Number of rows for {trade_name_item}: {len(df_trade_paras_item)}")
-                                    
-                                    # Check if columns exist
-                                    if 'Total Amount Detected (Overall Rs)' in df_trade_paras_item.columns:
-                                        st.write("✅ 'Total Amount Detected (Overall Rs)' column exists")
-                                        detection_values = df_trade_paras_item['Total Amount Detected (Overall Rs)']
-                                        st.write(f"Detection values: {detection_values.tolist()}")
-                                        st.write(f"Detection values (unique): {detection_values.unique()}")
-                                        st.write(f"Detection values (dtype): {detection_values.dtype}")
-                                        
-                                        # Try different approaches to get the value
-                                        detection_val_first = df_trade_paras_item['Total Amount Detected (Overall Rs)'].iloc[0]
-                                        detection_val_max = df_trade_paras_item['Total Amount Detected (Overall Rs)'].max()
-                                        detection_val_sum = df_trade_paras_item['Total Amount Detected (Overall Rs)'].sum()
-                                        
-                                        st.write(f"First value: {detection_val_first} (type: {type(detection_val_first)})")
-                                        st.write(f"Max value: {detection_val_max}")
-                                        st.write(f"Sum value: {detection_val_sum}")
-                                        
-                                        # Check for NaN values
-                                        st.write(f"Has NaN values: {df_trade_paras_item['Total Amount Detected (Overall Rs)'].isna().any()}")
-                                        st.write(f"All values are NaN: {df_trade_paras_item['Total Amount Detected (Overall Rs)'].isna().all()}")
-                                        
-                                    else:
-                                        st.write("❌ 'Total Amount Detected (Overall Rs)' column NOT found")
-                                        st.write(f"Available columns: {df_trade_paras_item.columns.tolist()}")
-                                    
-                                    if 'Total Amount Recovered (Overall Rs)' in df_trade_paras_item.columns:
-                                        st.write("✅ 'Total Amount Recovered (Overall Rs)' column exists")
-                                        recovery_values = df_trade_paras_item['Total Amount Recovered (Overall Rs)']
-                                        st.write(f"Recovery values: {recovery_values.tolist()}")
-                                        st.write(f"Recovery values (unique): {recovery_values.unique()}")
-                                    else:
-                                        st.write("❌ 'Total Amount Recovered (Overall Rs)' column NOT found")
-                                    
-                                    # Original logic with more detailed debugging
-                                    if 'Total Amount Detected (Overall Rs)' in df_trade_paras_item.columns:
-                                        detection_val = df_trade_paras_item['Total Amount Detected (Overall Rs)'].iloc[0]
-                                        st.write(f"Selected detection_val: {detection_val}")
-                                        st.write(f"Is detection_val NaN? {pd.isna(detection_val)}")
-                                        
-                                        if pd.isna(detection_val):
-                                            st.write("Detection value is NaN, setting to 0")
-                                            total_overall_detection = 0
-                                        else:
-                                            st.write(f"Detection value is valid: {detection_val}")
-                                            total_overall_detection = detection_val
-                                    
-                                    if 'Total Amount Recovered (Overall Rs)' in df_trade_paras_item.columns:
-                                        recovery_val = df_trade_paras_item['Total Amount Recovered (Overall Rs)'].iloc[0]
-                                        st.write(f"Selected recovery_val: {recovery_val}")
-                                        st.write(f"Is recovery_val NaN? {pd.isna(recovery_val)}")
-                                        
-                                        if pd.isna(recovery_val):
-                                            st.write("Recovery value is NaN, setting to 0")
-                                            total_overall_recovery = 0
-                                        else:
-                                            st.write(f"Recovery value is valid: {recovery_val}")
-                                            total_overall_recovery = recovery_val
-                                    
-                                    st.write(f"**Final values:**")
-                                    st.write(f"total_overall_detection: {total_overall_detection}")
-                                    st.write(f"total_overall_recovery: {total_overall_recovery}")
-                                    st.write("---")
-                                
-                                # Display the final values
-                                st.markdown(f"<b>Total Detection for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_detection)}</b>", unsafe_allow_html=True)
-                                st.markdown(f"<b>Total Recovery for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_recovery)}</b>", unsafe_allow_html=True)
-                                total_overall_detection = 0
-                                total_overall_recovery = 0
                                 if not df_trade_paras_item.empty:
                                     detection_val = df_trade_paras_item['Total Amount Detected (Overall Rs)'].iloc[0]
                                     recovery_val = df_trade_paras_item['Total Amount Recovered (Overall Rs)'].iloc[0]
-                                    total_overall_detection = 0 if pd.isna(detection_val) else detection_val
-                                    total_overall_recovery = 0 if pd.isna(recovery_val) else recovery_val
-
+                                    
+                                    total_overall_detection = 0 if pd.isna(detection_val) else int(detection_val)
+                                    total_overall_recovery = 0 if pd.isna(recovery_val) else int(recovery_val)
+                                
+                                # Display the final totals
                                 st.markdown(f"<b>Total Detection for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_detection)}</b>", unsafe_allow_html=True)
                                 st.markdown(f"<b>Total Recovery for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_recovery)}</b>", unsafe_allow_html=True)
                                 st.markdown("<hr style='border-top: 1px solid #ccc; margin-top:10px; margin-bottom:10px;'>", unsafe_allow_html=True)
