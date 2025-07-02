@@ -1603,202 +1603,7 @@ def calculate_audit_circle_agenda(audit_group_number_val):
         if 1 <= agn <= 30: return math.ceil(agn / 3.0)
         return 0
     except (ValueError, TypeError, AttributeError): return 0
-# Replace your existing mcm_agenda_tab function with this entire block
-def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
-    st.markdown("### MCM Agenda Preparation")
 
-    if not mcm_periods:
-        st.warning("No MCM periods found. Please create them first via 'Create MCM Period' tab.")
-        return
-
-    period_options = {k: f"{v.get('month_name')} {v.get('year')}" for k, v in sorted(mcm_periods.items(), key=lambda item: item[0], reverse=True) if v.get('month_name') and v.get('year')}
-    if not period_options:
-        st.warning("No valid MCM periods with complete month and year information available.")
-        return
-
-    selected_period_key = st.selectbox("Select MCM Period for Agenda", options=list(period_options.keys()), format_func=lambda k: period_options[k], key="mcm_agenda_period_select_v3_full")
-
-    if not selected_period_key:
-        st.info("Please select an MCM period."); return
-
-    selected_period_info = mcm_periods[selected_period_key]
-    month_year_str = f"{selected_period_info.get('month_name')} {selected_period_info.get('year')}"
-    st.markdown(f"<h2 style='text-align: center; color: #007bff; font-size: 22pt; margin-bottom:10px;'>MCM Audit Paras for {month_year_str}</h2>", unsafe_allow_html=True)
-    st.markdown("---")
-
-    # --- Data Loading using Session State ---
-    if 'df_period_data' not in st.session_state or st.session_state.get('current_period_key') != selected_period_key:
-        with st.spinner(f"Loading data for {month_year_str}..."):
-            df = read_from_spreadsheet(sheets_service, selected_period_info['spreadsheet_id'])
-            if df is None or df.empty:
-                st.info(f"No data found in the spreadsheet for {month_year_str}.")
-                st.session_state.df_period_data = pd.DataFrame()
-                return
-            
-            cols_to_convert_numeric = ['Audit Group Number', 'Audit Circle Number', 'Total Amount Detected (Overall Rs)',
-                                       'Total Amount Recovered (Overall Rs)', 'Audit Para Number',
-                                       'Revenue Involved (Lakhs Rs)', 'Revenue Recovered (Lakhs Rs)']
-            for col_name in cols_to_convert_numeric:
-                if col_name in df.columns:
-                    df[col_name] = df[col_name].astype(str).str.replace(r'[^\d.]', '', regex=True)
-                    df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
-                else:
-                    df[col_name] = 0 if "Amount" in col_name or "Revenue" in col_name else pd.NA
-            
-            st.session_state.df_period_data = df
-            st.session_state.current_period_key = selected_period_key
-    
-    df_period_data_full = st.session_state.df_period_data
-    if df_period_data_full.empty:
-        st.info(f"No data available for {month_year_str}.")
-        return
-
-    # --- Code to derive Audit Circle and set up UI loops ---
-    circle_col_to_use = 'Audit Circle Number'
-    if 'Audit Circle Number' not in df_period_data_full.columns or not df_period_data_full['Audit Circle Number'].notna().any() or not pd.to_numeric(df_period_data_full['Audit Circle Number'], errors='coerce').fillna(0).astype(int).gt(0).any():
-        if 'Audit Group Number' in df_period_data_full.columns and df_period_data_full['Audit Group Number'].notna().any():
-            df_period_data_full['Derived Audit Circle Number'] = df_period_data_full['Audit Group Number'].apply(calculate_audit_circle_agenda).fillna(0).astype(int)
-            circle_col_to_use = 'Derived Audit Circle Number'
-        else:
-            df_period_data_full['Derived Audit Circle Number'] = 0
-            circle_col_to_use = 'Derived Audit Circle Number'
-    else:
-        df_period_data_full['Audit Circle Number'] = df_period_data_full['Audit Circle Number'].fillna(0).astype(int)
-
-    for circle_num_iter in range(1, 11):
-        circle_label_iter = f"Audit Circle {circle_num_iter}"
-        df_circle_iter_data = df_period_data_full[df_period_data_full[circle_col_to_use] == circle_num_iter]
-
-        expander_header_html = f"<div style='background-color:#007bff; color:white; padding:10px 15px; border-radius:5px; margin-top:12px; margin-bottom:3px; font-weight:bold; font-size:16pt;'>{html.escape(circle_label_iter)}</div>"
-        st.markdown(expander_header_html, unsafe_allow_html=True)
-        with st.expander(f"View Details for {html.escape(circle_label_iter)}", expanded=False):
-            if df_circle_iter_data.empty:
-                st.write(f"No data for {circle_label_iter} in this MCM period.")
-                continue
-
-            group_labels_list = []
-            group_dfs_list = []
-            min_grp = (circle_num_iter - 1) * 3 + 1
-            max_grp = circle_num_iter * 3
-            for grp_iter_num in range(min_grp, max_grp + 1):
-                df_grp_iter_data = df_circle_iter_data[df_circle_iter_data['Audit Group Number'] == grp_iter_num]
-                if not df_grp_iter_data.empty:
-                    group_labels_list.append(f"Audit Group {grp_iter_num}")
-                    group_dfs_list.append(df_grp_iter_data)
-            
-            if not group_labels_list:
-                st.write(f"No specific audit group data found within {circle_label_iter}.")
-                continue
-
-            group_st_tabs_widgets = st.tabs(group_labels_list)
-            for i, group_tab_widget_item in enumerate(group_st_tabs_widgets):
-                with group_tab_widget_item:
-                    df_current_grp_item = group_dfs_list[i]
-                    unique_trade_names_list = df_current_grp_item.get('Trade Name', pd.Series(dtype='str')).dropna().unique()
-
-                    if not unique_trade_names_list.any():
-                        st.write("No trade names with DARs found for this group.")
-                        continue
-
-                    st.markdown(f"**DARs for {group_labels_list[i]}:**")
-                    session_key_selected_trade = f"selected_trade_{circle_num_iter}_{group_labels_list[i].replace(' ','_')}"
-
-                    for tn_idx_iter, trade_name_item in enumerate(unique_trade_names_list):
-                        trade_name_data = df_current_grp_item[df_current_grp_item['Trade Name'] == trade_name_item]
-                        dar_pdf_url_item = None
-                        if not trade_name_data.empty:
-                            dar_pdf_url_item = trade_name_data.iloc[0].get('DAR PDF URL')
-
-                        cols_trade_display = st.columns([0.7, 0.3])
-                        with cols_trade_display[0]:
-                            if st.button(f"{trade_name_item}", key=f"tradebtn_agenda_v3_{circle_num_iter}_{i}_{tn_idx_iter}", help=f"Toggle paras for {trade_name_item}", use_container_width=True):
-                                st.session_state[session_key_selected_trade] = None if st.session_state.get(session_key_selected_trade) == trade_name_item else trade_name_item
-                        
-                        with cols_trade_display[1]:
-                            if pd.notna(dar_pdf_url_item) and dar_pdf_url_item.startswith("http"):
-                                st.link_button("View DAR PDF", dar_pdf_url_item, use_container_width=True, type="secondary")
-                            else:
-                                st.caption("No PDF Link")
-
-                        if st.session_state.get(session_key_selected_trade) == trade_name_item:
-                            df_trade_paras_item = df_current_grp_item[df_current_grp_item['Trade Name'] == trade_name_item].copy()
-                            
-                            st.markdown(f"<h5 style='font-size:13pt; margin-top:15px; color:#154360;'>Gist of Audit Paras & MCM Decisions for: {html.escape(trade_name_item)}</h5>", unsafe_allow_html=True)
-                            
-                            st.markdown("""
-                                <style>
-                                    .grid-header {
-                                        font-weight: bold;
-                                        background-color: #343a40;
-                                        color: white;
-                                        padding: 10px 5px;
-                                        border-radius: 5px;
-                                        text-align: center;
-                                    }
-                                    .revenue-number {
-                                        font-weight: bold;
-                                    }
-                                </style>
-                            """, unsafe_allow_html=True)
-
-                            # Define column proportions
-                            col_proportions = (0.9, 5, 1.5, 1.5, 1.8, 2.5)
-
-                            # Define headers in a styled row
-                            header_cols = st.columns(col_proportions)
-                            headers = ['Para No.', 'Para Title', 'Detection (₹)', 'Recovery (₹)', 'Status', 'MCM Decision']
-                            for col, header in zip(header_cols, headers):
-                                col.markdown(f"<div class='grid-header'>{header}</div>", unsafe_allow_html=True)
-                            
-                            decision_options = ['Para closed since recovered', 'Para deferred', 'Para to be pursued else issue SCN']
-                            
-                            # Create a bordered container for each para row
-                            for index, row in df_trade_paras_item.iterrows():
-                                with st.container(border=True):
-                                    para_num_str = str(int(row["Audit Para Number"])) if pd.notna(row["Audit Para Number"]) and row["Audit Para Number"] != 0 else "N/A"
-                                    det_rs = (row.get('Revenue Involved (Lakhs Rs)', 0) * 100000) if pd.notna(row.get('Revenue Involved (Lakhs Rs)')) else 0
-                                    rec_rs = (row.get('Revenue Recovered (Lakhs Rs)', 0) * 100000) if pd.notna(row.get('Revenue Recovered (Lakhs Rs)')) else 0
-                                    
-                                    default_index = 0
-                                    if 'MCM Decision' in df_trade_paras_item.columns and pd.notna(row['MCM Decision']) and row['MCM Decision'] in decision_options:
-                                        default_index = decision_options.index(row['MCM Decision'])
-                                    
-                                    row_cols = st.columns(col_proportions)
-                                    row_cols[0].write(para_num_str)
-                                    row_cols[1].markdown(f"**{html.escape(str(row.get('Audit Para Heading', 'N/A')))}**")
-                                    row_cols[2].markdown(f"<span class='revenue-number'>{format_inr(det_rs)}</span>", unsafe_allow_html=True)
-                                    row_cols[3].markdown(f"<span class='revenue-number'>{format_inr(rec_rs)}</span>", unsafe_allow_html=True)
-                                    row_cols[4].write(row.get("Status of para", "N/A"))
-                                    
-                                    decision_key = f"mcm_decision_{trade_name_item}_{para_num_str}_{index}"
-                                    row_cols[5].selectbox("Decision", options=decision_options, index=default_index, key=decision_key, label_visibility="collapsed")
-                            
-                            st.markdown("<br>", unsafe_allow_html=True)
-                            
-                            # Save button logic
-                            if st.button("Save Decisions", key=f"save_decisions_{trade_name_item}", use_container_width=True, type="primary"):
-                                with st.spinner("Saving decisions..."):
-                                    if 'MCM Decision' not in st.session_state.df_period_data.columns:
-                                        st.session_state.df_period_data['MCM Decision'] = ""
-                                    
-                                    for index, row in df_trade_paras_item.iterrows():
-                                        para_num_str = str(int(row["Audit Para Number"])) if pd.notna(row["Audit Para Number"]) and row["Audit Para Number"] != 0 else "N/A"
-                                        decision_key = f"mcm_decision_{trade_name_item}_{para_num_str}_{index}"
-                                        selected_decision = st.session_state.get(decision_key, decision_options[0])
-                                        st.session_state.df_period_data.loc[index, 'MCM Decision'] = selected_decision
-                                    
-                                    success = update_spreadsheet_from_df(
-                                        sheets_service=sheets_service,
-                                        spreadsheet_id=selected_period_info['spreadsheet_id'],
-                                        df_to_write=st.session_state.df_period_data
-                                    )
-                                    
-                                    if success:
-                                        st.success("✅ Decisions saved successfully!")
-                                    else:
-                                        st.error("❌ Failed to save decisions. Check app logs for details.")
-
-                            st.markdown("<hr>", unsafe_allow_html=True)
 # def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
 #     st.markdown("### MCM Agenda Preparation")
 
@@ -2221,7 +2026,202 @@ from google_utils import update_spreadsheet_from_df
 #                                     pass
 
 #                                 st.markdown("<hr>", unsafe_allow_html=True)
+# Replace your existing mcm_agenda_tab function with this entire block
+def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
+    st.markdown("### MCM Agenda Preparation")
 
+    if not mcm_periods:
+        st.warning("No MCM periods found. Please create them first via 'Create MCM Period' tab.")
+        return
+
+    period_options = {k: f"{v.get('month_name')} {v.get('year')}" for k, v in sorted(mcm_periods.items(), key=lambda item: item[0], reverse=True) if v.get('month_name') and v.get('year')}
+    if not period_options:
+        st.warning("No valid MCM periods with complete month and year information available.")
+        return
+
+    selected_period_key = st.selectbox("Select MCM Period for Agenda", options=list(period_options.keys()), format_func=lambda k: period_options[k], key="mcm_agenda_period_select_v3_full")
+
+    if not selected_period_key:
+        st.info("Please select an MCM period."); return
+
+    selected_period_info = mcm_periods[selected_period_key]
+    month_year_str = f"{selected_period_info.get('month_name')} {selected_period_info.get('year')}"
+    st.markdown(f"<h2 style='text-align: center; color: #007bff; font-size: 22pt; margin-bottom:10px;'>MCM Audit Paras for {month_year_str}</h2>", unsafe_allow_html=True)
+    st.markdown("---")
+
+    # --- Data Loading using Session State ---
+    if 'df_period_data' not in st.session_state or st.session_state.get('current_period_key') != selected_period_key:
+        with st.spinner(f"Loading data for {month_year_str}..."):
+            df = read_from_spreadsheet(sheets_service, selected_period_info['spreadsheet_id'])
+            if df is None or df.empty:
+                st.info(f"No data found in the spreadsheet for {month_year_str}.")
+                st.session_state.df_period_data = pd.DataFrame()
+                return
+            
+            cols_to_convert_numeric = ['Audit Group Number', 'Audit Circle Number', 'Total Amount Detected (Overall Rs)',
+                                       'Total Amount Recovered (Overall Rs)', 'Audit Para Number',
+                                       'Revenue Involved (Lakhs Rs)', 'Revenue Recovered (Lakhs Rs)']
+            for col_name in cols_to_convert_numeric:
+                if col_name in df.columns:
+                    df[col_name] = df[col_name].astype(str).str.replace(r'[^\d.]', '', regex=True)
+                    df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
+                else:
+                    df[col_name] = 0 if "Amount" in col_name or "Revenue" in col_name else pd.NA
+            
+            st.session_state.df_period_data = df
+            st.session_state.current_period_key = selected_period_key
+    
+    df_period_data_full = st.session_state.df_period_data
+    if df_period_data_full.empty:
+        st.info(f"No data available for {month_year_str}.")
+        return
+
+    # --- Code to derive Audit Circle and set up UI loops ---
+    circle_col_to_use = 'Audit Circle Number'
+    if 'Audit Circle Number' not in df_period_data_full.columns or not df_period_data_full['Audit Circle Number'].notna().any() or not pd.to_numeric(df_period_data_full['Audit Circle Number'], errors='coerce').fillna(0).astype(int).gt(0).any():
+        if 'Audit Group Number' in df_period_data_full.columns and df_period_data_full['Audit Group Number'].notna().any():
+            df_period_data_full['Derived Audit Circle Number'] = df_period_data_full['Audit Group Number'].apply(calculate_audit_circle_agenda).fillna(0).astype(int)
+            circle_col_to_use = 'Derived Audit Circle Number'
+        else:
+            df_period_data_full['Derived Audit Circle Number'] = 0
+            circle_col_to_use = 'Derived Audit Circle Number'
+    else:
+        df_period_data_full['Audit Circle Number'] = df_period_data_full['Audit Circle Number'].fillna(0).astype(int)
+
+    for circle_num_iter in range(1, 11):
+        circle_label_iter = f"Audit Circle {circle_num_iter}"
+        df_circle_iter_data = df_period_data_full[df_period_data_full[circle_col_to_use] == circle_num_iter]
+
+        expander_header_html = f"<div style='background-color:#007bff; color:white; padding:10px 15px; border-radius:5px; margin-top:12px; margin-bottom:3px; font-weight:bold; font-size:16pt;'>{html.escape(circle_label_iter)}</div>"
+        st.markdown(expander_header_html, unsafe_allow_html=True)
+        with st.expander(f"View Details for {html.escape(circle_label_iter)}", expanded=False):
+            if df_circle_iter_data.empty:
+                st.write(f"No data for {circle_label_iter} in this MCM period.")
+                continue
+
+            group_labels_list = []
+            group_dfs_list = []
+            min_grp = (circle_num_iter - 1) * 3 + 1
+            max_grp = circle_num_iter * 3
+            for grp_iter_num in range(min_grp, max_grp + 1):
+                df_grp_iter_data = df_circle_iter_data[df_circle_iter_data['Audit Group Number'] == grp_iter_num]
+                if not df_grp_iter_data.empty:
+                    group_labels_list.append(f"Audit Group {grp_iter_num}")
+                    group_dfs_list.append(df_grp_iter_data)
+            
+            if not group_labels_list:
+                st.write(f"No specific audit group data found within {circle_label_iter}.")
+                continue
+
+            group_st_tabs_widgets = st.tabs(group_labels_list)
+            for i, group_tab_widget_item in enumerate(group_st_tabs_widgets):
+                with group_tab_widget_item:
+                    df_current_grp_item = group_dfs_list[i]
+                    unique_trade_names_list = df_current_grp_item.get('Trade Name', pd.Series(dtype='str')).dropna().unique()
+
+                    if not unique_trade_names_list.any():
+                        st.write("No trade names with DARs found for this group.")
+                        continue
+
+                    st.markdown(f"**DARs for {group_labels_list[i]}:**")
+                    session_key_selected_trade = f"selected_trade_{circle_num_iter}_{group_labels_list[i].replace(' ','_')}"
+
+                    for tn_idx_iter, trade_name_item in enumerate(unique_trade_names_list):
+                        trade_name_data = df_current_grp_item[df_current_grp_item['Trade Name'] == trade_name_item]
+                        dar_pdf_url_item = None
+                        if not trade_name_data.empty:
+                            dar_pdf_url_item = trade_name_data.iloc[0].get('DAR PDF URL')
+
+                        cols_trade_display = st.columns([0.7, 0.3])
+                        with cols_trade_display[0]:
+                            if st.button(f"{trade_name_item}", key=f"tradebtn_agenda_v3_{circle_num_iter}_{i}_{tn_idx_iter}", help=f"Toggle paras for {trade_name_item}", use_container_width=True):
+                                st.session_state[session_key_selected_trade] = None if st.session_state.get(session_key_selected_trade) == trade_name_item else trade_name_item
+                        
+                        with cols_trade_display[1]:
+                            if pd.notna(dar_pdf_url_item) and dar_pdf_url_item.startswith("http"):
+                                st.link_button("View DAR PDF", dar_pdf_url_item, use_container_width=True, type="secondary")
+                            else:
+                                st.caption("No PDF Link")
+
+                        if st.session_state.get(session_key_selected_trade) == trade_name_item:
+                            df_trade_paras_item = df_current_grp_item[df_current_grp_item['Trade Name'] == trade_name_item].copy()
+                            
+                            st.markdown(f"<h5 style='font-size:13pt; margin-top:15px; color:#154360;'>Gist of Audit Paras & MCM Decisions for: {html.escape(trade_name_item)}</h5>", unsafe_allow_html=True)
+                            
+                            st.markdown("""
+                                <style>
+                                    .grid-header {
+                                        font-weight: bold;
+                                        background-color: #343a40;
+                                        color: white;
+                                        padding: 10px 5px;
+                                        border-radius: 5px;
+                                        text-align: center;
+                                    }
+                                    .revenue-number {
+                                        font-weight: bold;
+                                    }
+                                </style>
+                            """, unsafe_allow_html=True)
+
+                            # Define column proportions
+                            col_proportions = (0.9, 5, 1.5, 1.5, 1.8, 2.5)
+
+                            # Define headers in a styled row
+                            header_cols = st.columns(col_proportions)
+                            headers = ['Para No.', 'Para Title', 'Detection (₹)', 'Recovery (₹)', 'Status', 'MCM Decision']
+                            for col, header in zip(header_cols, headers):
+                                col.markdown(f"<div class='grid-header'>{header}</div>", unsafe_allow_html=True)
+                            
+                            decision_options = ['Para closed since recovered', 'Para deferred', 'Para to be pursued else issue SCN']
+                            
+                            # Create a bordered container for each para row
+                            for index, row in df_trade_paras_item.iterrows():
+                                with st.container(border=True):
+                                    para_num_str = str(int(row["Audit Para Number"])) if pd.notna(row["Audit Para Number"]) and row["Audit Para Number"] != 0 else "N/A"
+                                    det_rs = (row.get('Revenue Involved (Lakhs Rs)', 0) * 100000) if pd.notna(row.get('Revenue Involved (Lakhs Rs)')) else 0
+                                    rec_rs = (row.get('Revenue Recovered (Lakhs Rs)', 0) * 100000) if pd.notna(row.get('Revenue Recovered (Lakhs Rs)')) else 0
+                                    
+                                    default_index = 0
+                                    if 'MCM Decision' in df_trade_paras_item.columns and pd.notna(row['MCM Decision']) and row['MCM Decision'] in decision_options:
+                                        default_index = decision_options.index(row['MCM Decision'])
+                                    
+                                    row_cols = st.columns(col_proportions)
+                                    row_cols[0].write(para_num_str)
+                                    row_cols[1].markdown(f"**{html.escape(str(row.get('Audit Para Heading', 'N/A')))}**")
+                                    row_cols[2].markdown(f"<span class='revenue-number'>{format_inr(det_rs)}</span>", unsafe_allow_html=True)
+                                    row_cols[3].markdown(f"<span class='revenue-number'>{format_inr(rec_rs)}</span>", unsafe_allow_html=True)
+                                    row_cols[4].write(row.get("Status of para", "N/A"))
+                                    
+                                    decision_key = f"mcm_decision_{trade_name_item}_{para_num_str}_{index}"
+                                    row_cols[5].selectbox("Decision", options=decision_options, index=default_index, key=decision_key, label_visibility="collapsed")
+                            
+                            st.markdown("<br>", unsafe_allow_html=True)
+                            
+                            # Save button logic
+                            if st.button("Save Decisions", key=f"save_decisions_{trade_name_item}", use_container_width=True, type="primary"):
+                                with st.spinner("Saving decisions..."):
+                                    if 'MCM Decision' not in st.session_state.df_period_data.columns:
+                                        st.session_state.df_period_data['MCM Decision'] = ""
+                                    
+                                    for index, row in df_trade_paras_item.iterrows():
+                                        para_num_str = str(int(row["Audit Para Number"])) if pd.notna(row["Audit Para Number"]) and row["Audit Para Number"] != 0 else "N/A"
+                                        decision_key = f"mcm_decision_{trade_name_item}_{para_num_str}_{index}"
+                                        selected_decision = st.session_state.get(decision_key, decision_options[0])
+                                        st.session_state.df_period_data.loc[index, 'MCM Decision'] = selected_decision
+                                    
+                                    success = update_spreadsheet_from_df(
+                                        sheets_service=sheets_service,
+                                        spreadsheet_id=selected_period_info['spreadsheet_id'],
+                                        df_to_write=st.session_state.df_period_data
+                                    )
+                                    
+                                    if success:
+                                        st.success("✅ Decisions saved successfully!")
+                                    else:
+                                        st.error("❌ Failed to save decisions. Check app logs for details.")
+
+                            st.markdown("<hr>", unsafe_allow_html=True)
         # --- Compile PDF Button ---
         if st.button("Compile Full MCM Agenda PDF", key=f"compile_mcm_agenda_pdf_{selected_period_key}", type="primary", help="Generates a comprehensive PDF.", use_container_width=True):
         #if st.button("Compile Full MCM Agenda PDF", key="compile_mcm_agenda_pdf_final_v4_progress", type="primary", help="Generates a comprehensive PDF.", use_container_width=True):
