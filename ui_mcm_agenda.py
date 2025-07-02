@@ -1056,23 +1056,7 @@ from google_utils import update_spreadsheet_from_df
 
 #                                 st.markdown("<hr>", unsafe_allow_html=True)
 # Replace your existing mcm_agenda_tab function with this entire block
-My apologies, I misunderstood your request. You want the text color changed, not the background.
 
-I have now corrected the code to apply colors to the text itself. This version includes:
-
-Detection (₹) and Recovery (₹) text in a dark green color.
-
-Status text in a blue color.
-
-All other styling (bolding, column widths, borders) remains as you approved.
-
-## Final Updated Code
-Please replace your mcm_agenda_tab function with this new version. The changes are in the CSS block and how the content is rendered in the table rows.
-
-Python
-
-# Add this import at the top of your main Python file if it's not there
-from google_utils import update_spreadsheet_from_df
 
 # Replace your existing mcm_agenda_tab function with this entire block
 def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
