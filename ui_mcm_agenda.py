@@ -1613,7 +1613,6 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
         st.info(f"No data found in the spreadsheet for {month_year_str}.")
     else:
         # Ensure correct data types for key columns
-        st.dataframe(df_period_data_full.head()) # DEBUG LINE
         cols_to_convert_numeric = ['Audit Group Number', 'Audit Circle Number', 'Total Amount Detected (Overall Rs)',
                                    'Total Amount Recovered (Overall Rs)', 'Audit Para Number',
                                    'Revenue Involved (Lakhs Rs)', 'Revenue Recovered (Lakhs Rs)']
@@ -1633,12 +1632,11 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
             else:
                 if 'Derived Audit Circle Number' not in df_period_data_full.columns:
                          df_period_data_full['Derived Audit Circle Number'] = 0
-                circle_col_to_use = 'Derived Audit Circle Number' # Fallback to potentially zeroed derived col
+                circle_col_to_use = 'Derived Audit Circle Number'
                 st.warning("'Audit Circle Number' could not be determined reliably from sheet or derived.")
-        else: # Sheet column exists and seems valid
+        else:
              df_period_data_full['Audit Circle Number'] = df_period_data_full['Audit Circle Number'].fillna(0).astype(int)
 
-        # Vertical collapsible tabs for Audit Circles
         for circle_num_iter in range(1, 11):
             circle_label_iter = f"Audit Circle {circle_num_iter}"
             df_circle_iter_data = df_period_data_full[df_period_data_full[circle_col_to_use] == circle_num_iter]
@@ -1683,53 +1681,62 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                         for tn_idx_iter, trade_name_item in enumerate(unique_trade_names_list):
                             trade_name_data = df_current_grp_item[df_current_grp_item['Trade Name'] == trade_name_item]
                             dar_pdf_url_item = None
-                            taxpayer_category = "N/A"
-                            taxpayer_gstin = "N/A"
 
                             if not trade_name_data.empty:
-                                first_row = trade_name_data.iloc[0]
-                                dar_pdf_url_item = first_row.get('DAR PDF URL')
-                                taxpayer_category = first_row.get('Category', 'N/A')
-                                taxpayer_gstin = first_row.get('GSTIN', 'N/A')
-
+                                dar_pdf_url_item = trade_name_data.iloc[0].get('DAR PDF URL')
 
                             cols_trade_display = st.columns([0.7, 0.3])
                             with cols_trade_display[0]:
-                                if st.button(f"{trade_name_item}", key=f"tradebtn_agenda_v3_{circle_num_iter}_{i}_{tn_idx_iter}", help=f"Show paras for {trade_name_item}", use_container_width=True):
-                                    st.session_state[session_key_selected_trade] = trade_name_item
+                                # --- CHANGE 2: BUTTON TOGGLE LOGIC ---
+                                if st.button(f"{trade_name_item}", key=f"tradebtn_agenda_v3_{circle_num_iter}_{i}_{tn_idx_iter}", help=f"Toggle paras for {trade_name_item}", use_container_width=True):
+                                    # If the button of the already selected item is clicked, deselect it (toggle off)
+                                    if st.session_state.get(session_key_selected_trade) == trade_name_item:
+                                        st.session_state[session_key_selected_trade] = None
+                                    # Otherwise, select the new item (toggle on)
+                                    else:
+                                        st.session_state[session_key_selected_trade] = trade_name_item
+
                             with cols_trade_display[1]:
                                 if pd.notna(dar_pdf_url_item) and isinstance(dar_pdf_url_item, str) and dar_pdf_url_item.startswith("http"):
                                     st.link_button("View DAR PDF", dar_pdf_url_item, use_container_width=True, type="secondary")
                                 else:
                                     st.caption("No PDF Link")
 
-                            # --- CHANGE 1: Display Category and GSTIN boxes ---
-                            category_color_map = {
-                                "Large": "#dc3545",  # Red
-                                "Medium": "#fd7e14", # Orange
-                                "Small": "#28a745",  # Green
-                                "N/A": "#6c757d"     # Grey
-                            }
-                            cat_color = category_color_map.get(taxpayer_category, "#6c757d")
-
-                            info_cols = st.columns(2)
-                            with info_cols[0]:
-                                st.markdown(f"""
-                                <div style="background-color: {cat_color}; color: white; padding: 4px 8px; border-radius: 5px; text-align: center; font-size: 0.8rem; margin-top: 2px;">
-                                    <b>Category:</b> {html.escape(str(taxpayer_category))}
-                                </div>
-                                """, unsafe_allow_html=True)
-                            with info_cols[1]:
-                                st.markdown(f"""
-                                <div style="background-color: #e9ecef; color: #495057; padding: 4px 8px; border-radius: 5px; text-align: center; font-size: 0.8rem; margin-top: 2px;">
-                                    <b>GSTIN:</b> {html.escape(str(taxpayer_gstin))}
-                                </div>
-                                """, unsafe_allow_html=True)
-
-
                             if st.session_state.get(session_key_selected_trade) == trade_name_item:
-                                st.markdown(f"<h5 style='font-size:13pt; margin-top:15px; color:#154360;'>Gist of Audit Paras for: {html.escape(trade_name_item)}</h5>", unsafe_allow_html=True)
                                 df_trade_paras_item = df_current_grp_item[df_current_grp_item['Trade Name'] == trade_name_item]
+
+                                taxpayer_category = "N/A"
+                                taxpayer_gstin = "N/A"
+                                if not df_trade_paras_item.empty:
+                                    first_row = df_trade_paras_item.iloc[0]
+                                    taxpayer_category = first_row.get('Category', 'N/A')
+                                    taxpayer_gstin = first_row.get('GSTIN', 'N/A')
+                                
+                                # --- CHANGE 1: LIGHTER CATEGORY COLORS ---
+                                # Each entry is a tuple of (background_color, text_color)
+                                category_color_map = {
+                                    "Large": ("#f8d7da", "#721c24"),   # Light Red
+                                    "Medium": ("#ffeeba", "#856404"), # Light Yellow/Orange
+                                    "Small": ("#d4edda", "#155724"),   # Light Green
+                                    "N/A": ("#e2e3e5", "#383d41")      # Light Grey
+                                }
+                                cat_bg_color, cat_text_color = category_color_map.get(taxpayer_category, ("#e2e3e5", "#383d41"))
+
+                                info_cols = st.columns(2)
+                                with info_cols[0]:
+                                    st.markdown(f"""
+                                    <div style="background-color: {cat_bg_color}; color: {cat_text_color}; padding: 4px 8px; border-radius: 5px; text-align: center; font-size: 0.8rem; margin-top: 2px;">
+                                        <b>Category:</b> {html.escape(str(taxpayer_category))}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                with info_cols[1]:
+                                    st.markdown(f"""
+                                    <div style="background-color: #e9ecef; color: #495057; padding: 4px 8px; border-radius: 5px; text-align: center; font-size: 0.8rem; margin-top: 2px;">
+                                        <b>GSTIN:</b> {html.escape(str(taxpayer_gstin))}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+
+                                st.markdown(f"<h5 style='font-size:13pt; margin-top:15px; color:#154360;'>Gist of Audit Paras for: {html.escape(trade_name_item)}</h5>", unsafe_allow_html=True)
 
                                 html_rows = ""
                                 total_para_det_rs = 0
@@ -1738,12 +1745,10 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                                     para_num = para_item_row.get("Audit Para Number", "N/A"); p_num_str = str(int(para_num)) if pd.notna(para_num) and para_num !=0 else "N/A"
                                     p_title = html.escape(str(para_item_row.get("Audit Para Heading", "N/A")))
                                     p_status = html.escape(str(para_item_row.get("Status of para", "N/A")))
-
                                     det_lakhs = para_item_row.get('Revenue Involved (Lakhs Rs)', 0); det_rs = (det_lakhs * 100000) if pd.notna(det_lakhs) else 0
                                     rec_lakhs = para_item_row.get('Revenue Recovered (Lakhs Rs)', 0); rec_rs = (rec_lakhs * 100000) if pd.notna(rec_lakhs) else 0
                                     total_para_det_rs += det_rs
                                     total_para_rec_rs += rec_rs
-
                                     html_rows += f"""
                                     <tr>
                                         <td>{p_num_str}</td>
@@ -1753,7 +1758,6 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                                         <td>{p_status}</td>
                                     </tr>"""
 
-                                # --- CHANGE 2: Add a total row (tfoot) to the HTML table ---
                                 total_row_html = f"""
                                 <tfoot>
                                     <tr style='font-weight:bold; background-color:#e9ecef;'>
@@ -1762,8 +1766,7 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                                         <td class='amount-col'>{format_inr(total_para_rec_rs)}</td>
                                         <td></td>
                                     </tr>
-                                </tfoot>
-                                """
+                                </tfoot>"""
 
                                 table_full_html = f"""
                                 <style>
@@ -1782,17 +1785,18 @@ def mcm_agenda_tab(drive_service, sheets_service, mcm_periods):
                                 </table>"""
                                 st.markdown(table_full_html, unsafe_allow_html=True)
 
-                                # --- CHANGE 3: Pull totals from the 'Overall' columns ---
                                 total_overall_detection = 0
                                 total_overall_recovery = 0
                                 if not df_trade_paras_item.empty:
-                                    total_overall_detection = df_trade_paras_item['Total Amount Detected (Overall Rs)'].iloc[0]
-                                    total_overall_recovery = df_trade_paras_item['Total Amount Recovered (Overall Rs)'].iloc[0]
+                                    detection_val = df_trade_paras_item['Total Amount Detected (Overall Rs)'].iloc[0]
+                                    recovery_val = df_trade_paras_item['Total Amount Recovered (Overall Rs)'].iloc[0]
+                                    total_overall_detection = 0 if pd.isna(detection_val) else detection_val
+                                    total_overall_recovery = 0 if pd.isna(recovery_val) else recovery_val
 
                                 st.markdown(f"<b>Total Detection for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_detection)}</b>", unsafe_allow_html=True)
                                 st.markdown(f"<b>Total Recovery for {html.escape(trade_name_item)}: ₹ {format_inr(total_overall_recovery)}</b>", unsafe_allow_html=True)
                                 st.markdown("<hr style='border-top: 1px solid #ccc; margin-top:10px; margin-bottom:10px;'>", unsafe_allow_html=True)
-
+        
         st.markdown("---")
         # --- Compile PDF Button ---
         if st.button("Compile Full MCM Agenda PDF", key="compile_mcm_agenda_pdf_final_v4_progress", type="primary", help="Generates a comprehensive PDF.", use_container_width=True):
