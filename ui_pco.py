@@ -41,6 +41,37 @@ def pco_dashboard(drive_service, sheets_service):
                     del st.session_state[key]
             st.rerun()
         st.markdown("---")
+        # --- Smart Audit Tracker Button in Sidebar ---
+        st.markdown(
+            """
+            <style>
+            .stButton>button {
+                background-image: linear-gradient(to right, #FF512F 0%, #DD2476  51%, #FF512F  100%);
+                color: white;
+                padding: 15px 30px;
+                text-align: center;
+                text-transform: uppercase;
+                transition: 0.5s;
+                background-size: 200% auto;
+                border: none;
+                border-radius: 10px;
+                display: block;
+                font-weight: bold;
+                width: 100%;
+            }
+            .stButton>button:hover {
+                background-position: right center;
+                color: #fff;
+                text-decoration: none;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+        if st.button("🚀 Smart Audit Tracker", key="launch_sat_pco"):
+            st.session_state.app_mode = "smart_audit_tracker"
+            st.rerun()
+        st.markdown("---")
     selected_tab = option_menu(
         menu_title=None,
          options=["Create MCM Period", "Manage MCM Periods", "View Uploaded Reports", 
