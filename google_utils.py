@@ -11,7 +11,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload, MediaIoBaseDownload
 
-from config import SCOPES, MASTER_DRIVE_FOLDER_NAME, MCM_PERIODS_FILENAME_ON_DRIVE
+from config import SCOPES, MASTER_DRIVE_FOLDER_NAME, MCM_PERIODS_FILENAME_ON_DRIVE, LOG_SHEET_FILENAME_ON_DRIVE
 
 def get_google_services():
     creds = None
@@ -113,7 +113,75 @@ def initialize_drive_structure(drive_service):
         if mcm_file_id:
             st.session_state.mcm_periods_drive_file_id = mcm_file_id
     return True
+def find_or_create_log_sheet(drive_service, sheets_service, parent_folder_id):
+    """
+    Finds the log sheet by name or creates it in the specified parent folder if it doesn't exist.
+    Caches the sheet ID in Streamlit's session state to avoid repeated lookups.
+    """
+    if 'log_sheet_id' in st.session_state and st.session_state.log_sheet_id:
+        return st.session_state.log_sheet_id
 
+    log_sheet_name = LOG_SHEET_FILENAME_ON_DRIVE
+    
+    # Search for the sheet by name within the parent folder
+    log_sheet_id = find_drive_item_by_name(drive_service, log_sheet_name,
+                                           mime_type='application/vnd.google-apps.spreadsheet',
+                                           parent_id=parent_folder_id)
+    
+    if log_sheet_id:
+        st.session_state.log_sheet_id = log_sheet_id
+        return log_sheet_id
+    
+    # If not found, create it
+    st.info(f"Log sheet '{log_sheet_name}' not found. Creating it...")
+    spreadsheet_id, _ = create_spreadsheet(sheets_service, drive_service, log_sheet_name, parent_folder_id=parent_folder_id)
+    
+    if spreadsheet_id:
+        st.session_state.log_sheet_id = spreadsheet_id
+        # Add a header row to the newly created sheet
+        header = [['Timestamp', 'Username', 'Role']]
+        body = {'values': header}
+        try:
+            sheets_service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id,
+                range='Sheet1!A1',
+                valueInputOption='USER_ENTERED',
+                body=body
+            ).execute()
+            st.success(f"Log sheet '{log_sheet_name}' created successfully.")
+        except HttpError as error:
+            st.error(f"Failed to write header to new log sheet: {error}")
+            return None
+        return spreadsheet_id
+    else:
+        st.error(f"Fatal: Failed to create log sheet '{log_sheet_name}'. Logging will be disabled.")
+        return None
+
+def log_activity(sheets_service, log_sheet_id, username, role):
+    """Appends a login activity record to the specified log sheet."""
+    if not log_sheet_id:
+        st.warning("Log Sheet ID is not available. Skipping activity logging.")
+        return False
+    
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        values = [[timestamp, username, role]]
+        body = {'values': values}
+        
+        sheets_service.spreadsheets().values().append(
+            spreadsheetId=log_sheet_id,
+            range='Sheet1!A1', # Appending to the sheet will add it after the last row
+            valueInputOption='USER_ENTERED',
+            insertDataOption='INSERT_ROWS',
+            body=body
+        ).execute()
+        return True
+    except HttpError as error:
+        st.error(f"An error occurred while logging activity: {error}")
+        return False
+    except Exception as e:
+        st.error(f"An unexpected error occurred during logging: {e}")
+        return False
 def load_mcm_periods(drive_service):
     mcm_periods_file_id = st.session_state.get('mcm_periods_drive_file_id')
     if not mcm_periods_file_id:
