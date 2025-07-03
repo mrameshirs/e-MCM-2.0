@@ -148,7 +148,7 @@ def audit_group_dashboard(drive_service, sheets_service):
             st.rerun()
         st.markdown("---")
     selected_tab = option_menu(menu_title="e-MCM Menu",
-        menu_title=None, options=["Upload DAR for MCM", "View My Uploaded DARs", "Delete My DAR Entries"],
+         options=["Upload DAR for MCM", "View My Uploaded DARs", "Delete My DAR Entries"],
         icons=["cloud-upload-fill", "eye-fill", "trash2-fill"], menu_icon="person-workspace", default_index=0, orientation="horizontal",
         styles={
             "container": {"padding": "5px !important", "background-color": "#e9ecef"}, "icon": {"color": "#28a745", "font-size": "20px"},
