@@ -69,6 +69,7 @@ def login_page():
                 st.session_state.audit_group_no = AUDIT_GROUP_NUMBERS[username]
             st.success(f"Logged in as {username} ({st.session_state.role})")
             st.session_state.drive_structure_initialized = False
+            st.session_state.login_event_logged = False # ADD THIS LINE to reset the flag on new login
             st.rerun()
         else:
             st.error("Invalid username or password")
