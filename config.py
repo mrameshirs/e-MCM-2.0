@@ -8,7 +8,7 @@ SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/a
 # --- Google Drive Master Configuration ---
 MASTER_DRIVE_FOLDER_NAME = "e-MCM_Root_DAR_App"  # Master folder on Google Drive
 MCM_PERIODS_FILENAME_ON_DRIVE = "mcm_periods_config.json"  # Config file on Google Drive
-
+LOG_SHEET_FILENAME_ON_DRIVE = "e-MCM_App_Activity_Log" 
 # --- User Credentials ---
 USER_CREDENTIALS = {
     "planning_officer": "pco_password",
