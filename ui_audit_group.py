@@ -116,8 +116,38 @@ def audit_group_dashboard(drive_service, sheets_service):
             st.session_state.logged_in = False; st.session_state.username = ""; st.session_state.role = ""; st.session_state.audit_group_no = None
             st.rerun()
         st.markdown("---")
-
-    selected_tab = option_menu(
+    # --- Smart Audit Tracker Button in Sidebar ---
+        st.markdown(
+            """
+            <style>
+            .stButton>button {
+                background-image: linear-gradient(to right, #1D976C 0%, #93F9B9  51%, #1D976C  100%);
+                color: white;
+                padding: 15px 30px;
+                text-align: center;
+                text-transform: uppercase;
+                transition: 0.5s;
+                background-size: 200% auto;
+                border: none;
+                border-radius: 10px;
+                display: block;
+                font-weight: bold;
+                width: 100%;
+            }
+            .stButton>button:hover {
+                background-position: right center;
+                color: #fff;
+                text-decoration: none;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+        if st.button("🚀 Smart Audit Tracker", key="launch_sat_ag"):
+            st.session_state.app_mode = "smart_audit_tracker"
+            st.rerun()
+        st.markdown("---")
+    selected_tab = option_menu(menu_title="e-MCM Menu",
         menu_title=None, options=["Upload DAR for MCM", "View My Uploaded DARs", "Delete My DAR Entries"],
         icons=["cloud-upload-fill", "eye-fill", "trash2-fill"], menu_icon="person-workspace", default_index=0, orientation="horizontal",
         styles={
