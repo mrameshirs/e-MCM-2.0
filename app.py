@@ -6,7 +6,7 @@ st.set_page_config(layout="wide", page_title="e-MCM App - GST Audit 1")
 # --- Custom Module Imports ---
 from config import MASTER_DRIVE_FOLDER_NAME # Example of using config
 from css_styles import load_custom_css
-from google_utils import get_google_services, initialize_drive_structure
+from google_utils import get_google_services, initialize_drive_structure, find_drive_item_by_name, find_or_create_log_sheet, log_activity
 from ui_login import login_page
 from ui_pco import pco_dashboard
 from ui_audit_group import audit_group_dashboard
@@ -30,6 +30,8 @@ if 'ag_current_uploaded_file_name' not in st.session_state: st.session_state.ag_
 if 'master_drive_folder_id' not in st.session_state: st.session_state.master_drive_folder_id = None
 if 'mcm_periods_drive_file_id' not in st.session_state: st.session_state.mcm_periods_drive_file_id = None
 if 'drive_structure_initialized' not in st.session_state: st.session_state.drive_structure_initialized = False
+if 'login_event_logged' not in st.session_state: st.session_state.login_event_logged = False
+if 'log_sheet_id' not in st.session_state: st.session_state.log_sheet_id = None
 
 # --- Main App Logic ---
 if not st.session_state.logged_in:
@@ -48,6 +50,24 @@ else:
 
     # Proceed only if Google services are available
     if st.session_state.drive_service and st.session_state.sheets_service:
+        # --- NEW: ACTIVITY LOGGING LOGIC ---
+        # This runs once per login after services are confirmed to be available.
+        if not st.session_state.get('login_event_logged'):
+            # The master folder ID is needed to find/create the log sheet in the correct location.
+            # We ensure it's available before proceeding with logging.
+            if not st.session_state.get('master_drive_folder_id'):
+                 master_id = find_drive_item_by_name(st.session_state.drive_service, MASTER_DRIVE_FOLDER_NAME, 'application/vnd.google-apps.folder')
+                 if master_id:
+                    st.session_state.master_drive_folder_id = master_id
+
+            master_folder_id = st.session_state.get('master_drive_folder_id')
+            if master_folder_id:
+                log_sheet_id = find_or_create_log_sheet(st.session_state.drive_service, st.session_state.sheets_service, master_folder_id)
+                if log_sheet_id:
+                    if log_activity(st.session_state.sheets_service, log_sheet_id, st.session_state.username, st.session_state.role):
+                        st.session_state.login_event_logged = True # Mark as logged to prevent re-logging
+            # If the master folder isn't found here, the full drive initialization will handle the error message.
+        # --- END OF LOGGING LOGIC ---
         # Initialize Drive Structure if not already done
         if not st.session_state.get('drive_structure_initialized'):
             with st.spinner(
