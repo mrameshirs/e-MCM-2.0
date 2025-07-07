@@ -16,6 +16,7 @@ from google_utils import (
     find_drive_item_by_name
 )
 from config import SMART_AUDIT_MASTER_DB_SHEET_NAME, MASTER_DRIVE_FOLDER_NAME
+#from config import SCOPES, MASTER_DRIVE_FOLDER_NAME, MCM_PERIODS_FILENAME_ON_DRIVE, LOG_SHEET_FILENAME_ON_DRIVE, SMART_AUDIT_MASTER_DB_SHEET_NAME
 
 # --- Helper Functions ---
 
