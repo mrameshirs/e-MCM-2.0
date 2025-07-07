@@ -12,7 +12,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload, MediaIoBaseDownload
 
-from config import SCOPES, MASTER_DRIVE_FOLDER_NAME, MCM_PERIODS_FILENAME_ON_DRIVE, LOG_SHEET_FILENAME_ON_DRIVE
+#from config import SCOPES, MASTER_DRIVE_FOLDER_NAME, MCM_PERIODS_FILENAME_ON_DRIVE, LOG_SHEET_FILENAME_ON_DRIVE
+from config import SCOPES, MASTER_DRIVE_FOLDER_NAME, MCM_PERIODS_FILENAME_ON_DRIVE, LOG_SHEET_FILENAME_ON_DRIVE, SMART_AUDIT_MASTER_DB_SHEET_NAME
 
 def get_google_services():
     creds = None
@@ -541,3 +542,37 @@ def update_spreadsheet_from_df(sheets_service, spreadsheet_id, df_to_write):
     except Exception as e:
         st.error(f"An unexpected error occurred while updating the Spreadsheet: {e}")
         return False
+
+def find_or_create_spreadsheet(drive_service, sheets_service, sheet_name, parent_folder_id):
+    """Finds a spreadsheet by name or creates it if it doesn't exist."""
+    sheet_id = find_drive_item_by_name(drive_service, sheet_name,
+                                       mime_type='application/vnd.google-apps.spreadsheet',
+                                       parent_id=parent_folder_id)
+    if sheet_id:
+        return sheet_id
+
+    st.info(f"Spreadsheet '{sheet_name}' not found. Creating it...")
+    sheet_id, _ = create_spreadsheet(sheets_service, drive_service, sheet_name, parent_folder_id=parent_folder_id)
+    
+    if sheet_id:
+        # Define the header for the new master DB
+        header = [[
+            "GSTIN", "Trade Name", "Category", "Allocated Audit Group Number", 
+            "Allocated Circle", "Financial Year", "Allocated Date", "Uploaded Date", 
+            "Office Order PDF Path", "Reassigned Flag", "Old Group Number", "Old Circle Number"
+        ]]
+        body = {'values': header}
+        try:
+            sheets_service.spreadsheets().values().append(
+                spreadsheetId=sheet_id, range='Sheet1!A1',
+                valueInputOption='USER_ENTERED', body=body
+            ).execute()
+            st.success(f"Spreadsheet '{sheet_name}' created successfully with headers.")
+        except HttpError as error:
+            st.error(f"Failed to write header to new spreadsheet: {error}")
+            return None
+        return sheet_id
+    else:
+        st.error(f"Fatal: Failed to create spreadsheet '{sheet_name}'.")
+        return None
+
