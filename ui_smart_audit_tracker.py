@@ -429,6 +429,7 @@ def audit_group_tracker_view(drive_service, sheets_service):
         "Allocation Date": ["2025-07-01", "2025-07-03"],
         "Status": ["Pending Acceptance", "In Progress"]
     }, use_container_width=True)
+
 # # ui_smart_audit_tracker.py
 # import streamlit as st
 # from streamlit_option_menu import option_menu
