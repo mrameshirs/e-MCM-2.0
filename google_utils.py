@@ -91,21 +91,23 @@ def create_drive_folder(drive_service, folder_name, parent_id=None):
         return None, None
 
 def initialize_drive_structure(drive_service):
-    """Initializes the application's folder structure within the specified Shared Drive."""
+    """
+    Initializes the entire application folder and file structure within the specified Shared Drive.
+    This is the central point of control for ensuring all files are created in the correct location.
+    """
     if not SHARED_DRIVE_ID or "PASTE" in SHARED_DRIVE_ID:
         st.error("CRITICAL: `SHARED_DRIVE_ID` is not configured in `config.py`. Please follow the setup instructions.")
         return False
 
+    # 1. Find or Create the Master Folder inside the Shared Drive
     master_id = st.session_state.get('master_drive_folder_id')
     if not master_id:
         master_id = find_drive_item_by_name(drive_service, MASTER_DRIVE_FOLDER_NAME,
                                             'application/vnd.google-apps.folder', parent_id=SHARED_DRIVE_ID)
         if not master_id:
-            st.info(f"Master folder '{MASTER_DRIVE_FOLDER_NAME}' not found in Shared Drive, attempting to create it...")
+            st.info(f"Master folder '{MASTER_DRIVE_FOLDER_NAME}' not found in Shared Drive, creating it...")
             master_id, _ = create_drive_folder(drive_service, MASTER_DRIVE_FOLDER_NAME, parent_id=SHARED_DRIVE_ID)
-            if master_id:
-                st.success(f"Master folder '{MASTER_DRIVE_FOLDER_NAME}' created successfully in your Shared Drive.")
-            else:
+            if not master_id:
                 st.error(f"Fatal: Failed to create master folder '{MASTER_DRIVE_FOLDER_NAME}'. Cannot proceed.")
                 return False
         st.session_state.master_drive_folder_id = master_id
@@ -113,6 +115,22 @@ def initialize_drive_structure(drive_service):
     if not st.session_state.master_drive_folder_id:
         st.error("Master Drive folder ID could not be established. Cannot proceed.")
         return False
+
+    # 2. Find or Create the Log Sheet inside the Master Folder
+    if not st.session_state.get('log_sheet_id'):
+        log_sheet_id = find_or_create_spreadsheet(drive_service, st.session_state.sheets_service, LOG_SHEET_FILENAME_ON_DRIVE, st.session_state.master_drive_folder_id)
+        if not log_sheet_id:
+            st.error("Failed to create the application log sheet. Logging will be disabled.")
+        st.session_state.log_sheet_id = log_sheet_id
+
+    # 3. Find or Create the MCM Periods Config File inside the Master Folder
+    if not st.session_state.get('mcm_periods_drive_file_id'):
+        mcm_file_id = find_drive_item_by_name(drive_service, MCM_PERIODS_FILENAME_ON_DRIVE, parent_id=st.session_state.master_drive_folder_id)
+        if not mcm_file_id:
+            st.info(f"MCM Periods config file '{MCM_PERIODS_FILENAME_ON_DRIVE}' not found, creating it...")
+            save_mcm_periods(drive_service, {}) # Create an empty config file
+        else:
+            st.session_state.mcm_periods_drive_file_id = mcm_file_id
 
     return True
 
@@ -170,38 +188,42 @@ def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=No
         st.error(f"An unexpected error occurred creating Spreadsheet: {e}")
         return None, None
 
-def find_or_create_log_sheet(drive_service, sheets_service, parent_folder_id):
-    """Finds the log sheet or creates it if it doesn't exist."""
-    if 'log_sheet_id' in st.session_state and st.session_state.log_sheet_id:
-        return st.session_state.log_sheet_id
+def find_or_create_spreadsheet(drive_service, sheets_service, sheet_name, parent_folder_id):
+    """Finds a spreadsheet by name or creates it with a header if it doesn't exist."""
+    sheet_id = find_drive_item_by_name(drive_service, sheet_name,
+                                       mime_type='application/vnd.google-apps.spreadsheet',
+                                       parent_id=parent_folder_id)
+    if sheet_id:
+        return sheet_id
 
-    log_sheet_name = LOG_SHEET_FILENAME_ON_DRIVE
-    log_sheet_id = find_drive_item_by_name(drive_service, log_sheet_name,
-                                           mime_type='application/vnd.google-apps.spreadsheet',
-                                           parent_id=parent_folder_id)
-    if log_sheet_id:
-        st.session_state.log_sheet_id = log_sheet_id
-        return log_sheet_id
+    st.info(f"Spreadsheet '{sheet_name}' not found. Creating it...")
+    sheet_id, _ = create_spreadsheet(sheets_service, drive_service, sheet_name, parent_folder_id=parent_folder_id)
     
-    st.info(f"Log sheet '{log_sheet_name}' not found. Creating it...")
-    spreadsheet_id, _ = create_spreadsheet(sheets_service, drive_service, log_sheet_name, parent_folder_id=parent_folder_id)
-    
-    if spreadsheet_id:
-        st.session_state.log_sheet_id = spreadsheet_id
-        header = [['Timestamp', 'Username', 'Role']]
-        body = {'values': header}
-        try:
-            sheets_service.spreadsheets().values().append(
-                spreadsheetId=spreadsheet_id, range='Sheet1!A1',
-                valueInputOption='USER_ENTERED', body=body
-            ).execute()
-            st.success(f"Log sheet '{log_sheet_name}' created successfully.")
-        except HttpError as error:
-            st.error(f"Failed to write header to new log sheet: {error}")
-            return None
-        return spreadsheet_id
+    if sheet_id:
+        header = []
+        if sheet_name == SMART_AUDIT_MASTER_DB_SHEET_NAME:
+            header = [[
+                "GSTIN", "Trade Name", "Category", "Allocated Audit Group Number", 
+                "Allocated Circle", "Financial Year", "Allocated Date", "Uploaded Date", 
+                "Office Order PDF Path", "Reassigned Flag", "Old Group Number", "Old Circle Number"
+            ]]
+        elif sheet_name == LOG_SHEET_FILENAME_ON_DRIVE:
+             header = [['Timestamp', 'Username', 'Role']]
+        
+        if header:
+            body = {'values': header}
+            try:
+                sheets_service.spreadsheets().values().append(
+                    spreadsheetId=sheet_id, range='Sheet1!A1',
+                    valueInputOption='USER_ENTERED', body=body
+                ).execute()
+                st.success(f"Spreadsheet '{sheet_name}' created successfully with headers.")
+            except HttpError as error:
+                st.error(f"Failed to write header to new spreadsheet: {error}")
+                return None
+        return sheet_id
     else:
-        st.error(f"Fatal: Failed to create log sheet '{log_sheet_name}'. Logging will be disabled.")
+        st.error(f"Fatal: Failed to create spreadsheet '{sheet_name}'.")
         return None
 
 def log_activity(sheets_service, log_sheet_id, username, role):
@@ -229,48 +251,6 @@ def log_activity(sheets_service, log_sheet_id, username, role):
     except Exception as e:
         st.error(f"An unexpected error occurred during logging: {e}")
         return False
-
-def find_or_create_spreadsheet(drive_service, sheets_service, sheet_name, parent_folder_id):
-    """Finds a spreadsheet by name or creates it with a header if it doesn't exist."""
-    sheet_id = find_drive_item_by_name(drive_service, sheet_name,
-                                       mime_type='application/vnd.google-apps.spreadsheet',
-                                       parent_id=parent_folder_id)
-    if sheet_id:
-        return sheet_id
-
-    st.info(f"Spreadsheet '{sheet_name}' not found. Creating it...")
-    sheet_id, _ = create_spreadsheet(sheets_service, drive_service, sheet_name, parent_folder_id=parent_folder_id)
-    
-    if sheet_id:
-        if sheet_name == SMART_AUDIT_MASTER_DB_SHEET_NAME:
-            header = [[
-                "GSTIN", "Trade Name", "Category", "Allocated Audit Group Number", 
-                "Allocated Circle", "Financial Year", "Allocated Date", "Uploaded Date", 
-                "Office Order PDF Path", "Reassigned Flag", "Old Group Number", "Old Circle Number"
-            ]]
-        else: # Default or e-MCM header
-            header = [[
-                "Audit Group Number", "Audit Circle Number", "GSTIN", "Trade Name", "Category",
-                "Total Amount Detected (Overall Rs)", "Total Amount Recovered (Overall Rs)",
-                "Audit Para Number", "Audit Para Heading",
-                "Revenue Involved (Lakhs Rs)", "Revenue Recovered (Lakhs Rs)", "Status of para",
-                "DAR PDF URL", "Record Created Date"
-            ]]
-
-        body = {'values': header}
-        try:
-            sheets_service.spreadsheets().values().append(
-                spreadsheetId=sheet_id, range='Sheet1!A1',
-                valueInputOption='USER_ENTERED', body=body
-            ).execute()
-            st.success(f"Spreadsheet '{sheet_name}' created successfully with headers.")
-        except HttpError as error:
-            st.error(f"Failed to write header to new spreadsheet: {error}")
-            return None
-        return sheet_id
-    else:
-        st.error(f"Fatal: Failed to create spreadsheet '{sheet_name}'.")
-        return None
 
 def read_from_spreadsheet(sheets_service, spreadsheet_id, sheet_name="Sheet1"):
     """Reads an entire sheet into a pandas DataFrame, handling varying column counts."""
@@ -427,6 +407,7 @@ def append_to_spreadsheet(sheets_service, spreadsheet_id, values_to_append):
             spreadsheetId=spreadsheet_id,
             range=f"{first_sheet_title}!A1",
             valueInputOption='USER_ENTERED',
+            insertDataOption='INSERT_ROWS',
             body=body
         ).execute()
         return append_result
@@ -436,44 +417,6 @@ def append_to_spreadsheet(sheets_service, spreadsheet_id, values_to_append):
     except Exception as e:
         st.error(f"Unexpected error appending to Spreadsheet: {e}")
         return None
-def delete_spreadsheet_rows(sheets_service, spreadsheet_id, sheet_id_gid, row_indices_to_delete):
-    # row_indices_to_delete are 0-based indices of the *data* rows (DataFrame iloc from read_from_spreadsheet)
-    if not row_indices_to_delete:
-        return True
-    requests = []
-    # Sort in descending order to avoid index shifting issues during deletion
-    for data_row_index in sorted(row_indices_to_delete, reverse=True):
-        # Sheet API uses 0-based indexing for rows *within the specified range*,
-        # but deleteDimension needs 0-based index relative to start of sheet if sheetId is used.
-        # If header is row 0 in API terms, data row 0 is sheet row 1.
-        # The 'startIndex' for deleteDimension is 0-based and exclusive of the header if sheet data starts from row 1 (0-indexed) after header.
-        # Assuming read_from_spreadsheet gives data starting from what would be sheet row index 1 (if header is 0).
-        # So, if `data_row_index` is 0 (first data row), it means the 2nd row in the sheet (1-indexed), which is row index 1 for the API.
-        sheet_row_start_index = data_row_index + 1 # If data starts at physical row 2 (index 1)
-        requests.append({
-            "deleteDimension": {
-                "range": {
-                    "sheetId": sheet_id_gid,
-                    "dimension": "ROWS",
-                    "startIndex": sheet_row_start_index, # This is the 0-based index of the row in the sheet (header is 0)
-                    "endIndex": sheet_row_start_index + 1
-                }
-            }
-        })
-    if requests:
-        try:
-            body = {'requests': requests}
-            sheets_service.spreadsheets().batchUpdate(
-                spreadsheetId=spreadsheet_id, body=body).execute()
-            return True
-        except HttpError as error:
-            st.error(f"An error occurred deleting rows from Spreadsheet: {error}")
-            return False
-        except Exception as e:
-            st.error(f"Unexpected error deleting rows: {e}")
-            return False
-    return True# # google_utils.py
-
 # # google_utils.py
 # from datetime import datetime 
 # import streamlit as st
