@@ -10,6 +10,8 @@ MASTER_DRIVE_FOLDER_NAME = "e-MCM_Root_DAR_App"  # Master folder on Google Drive
 MCM_PERIODS_FILENAME_ON_DRIVE = "mcm_periods_config.json"  # Config file on Google Drive
 LOG_SHEET_FILENAME_ON_DRIVE = "e-MCM_App_Activity_Log" 
 SMART_AUDIT_MASTER_DB_SHEET_NAME = "smart_audit_master_db" # New master DB sheet
+
+SHARED_DRIVE_ID = "1xTUHQPiZtYj84ZJVXpdCRxG70ui18TSG"
 # --- User Credentials ---
 USER_CREDENTIALS = {
     "planning_officer": "pco_password",
