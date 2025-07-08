@@ -16,7 +16,42 @@ from google_utils import (
     create_spreadsheet, read_from_spreadsheet,update_spreadsheet_from_df,test_permissions_debug
 )
 from config import USER_CREDENTIALS, MCM_PERIODS_FILENAME_ON_DRIVE
-
+def test_root_spreadsheet_creation(sheets_service, drive_service):
+    """Test creating spreadsheet in root Drive"""
+    st.subheader("🧪 Test Spreadsheet Creation in Root")
+    
+    if st.button("Test Create in Root Drive"):
+        test_title = f"TEST_ROOT_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        with st.spinner("Testing..."):
+            try:
+                # Create without any parent folder
+                spreadsheet_body = {'properties': {'title': test_title}}
+                spreadsheet = sheets_service.spreadsheets().create(
+                    body=spreadsheet_body,
+                    fields='spreadsheetId,spreadsheetUrl'
+                ).execute()
+                
+                spreadsheet_id = spreadsheet.get('spreadsheetId')
+                spreadsheet_url = spreadsheet.get('spreadsheetUrl')
+                
+                if spreadsheet_id:
+                    st.success("✅ SUCCESS! Spreadsheet created in root Drive")
+                    st.info(f"**ID:** {spreadsheet_id}")
+                    st.info(f"**URL:** {spreadsheet_url}")
+                    
+                    # Clean up test file
+                    try:
+                        drive_service.files().delete(fileId=spreadsheet_id).execute()
+                        st.success("✅ Test file cleaned up")
+                    except:
+                        st.warning("⚠️ Test file created but not cleaned up")
+                        st.info("You can manually delete it from your Drive")
+                else:
+                    st.error("❌ No spreadsheet ID returned")
+                    
+            except Exception as e:
+                st.error(f"❌ Test failed: {e}")
 def pco_dashboard(drive_service, sheets_service):
     st.markdown("<div class='sub-header'>Planning & Coordination Officer Dashboard</div>", unsafe_allow_html=True)
     mcm_periods = load_mcm_periods(drive_service)  # Direct load, no caching
@@ -146,7 +181,8 @@ def pco_dashboard(drive_service, sheets_service):
                             st.error("Failed to create Drive folder or Spreadsheet.")
         st.markdown("---")
         test_permissions_debug(drive_service, sheets_service)
-
+        st.markdown("---")
+        test_root_spreadsheet_creation(sheets_service, drive_service)
     # ========================== MANAGE MCM PERIODS TAB ==========================
     elif selected_tab == "Manage MCM Periods":
         st.markdown("<h3>Manage Existing MCM Periods</h3>", unsafe_allow_html=True)
