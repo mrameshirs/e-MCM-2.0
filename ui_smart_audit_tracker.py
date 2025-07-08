@@ -1,6 +1,5 @@
-# ui_smart_audit_tracker.py# ui_smart_audit_tracker.py
+# ui_smart_audit_tracker.py
 import streamlit as st
-from streamlit_option_menu import option_menu
 import pandas as pd
 import re
 import datetime
@@ -80,7 +79,7 @@ def smart_audit_tracker_dashboard(drive_service, sheets_service):
     master_db_sheet_id = st.session_state.get('master_db_sheet_id')
 
     # --- New Tab-based Layout ---
-    st.markdown("<h3>Manage Unit Allocations</h3>", unsafe_allow_html=True)
+    st.markdown("<h3>Manage/Track Unit Allocations</h3>", unsafe_allow_html=True)
     
     tab1, tab2, tab3, tab4 = st.tabs([
         "📝 Allocate Units", 
@@ -411,181 +410,6 @@ def audit_group_tracker_view(drive_service, sheets_service):
         "Allocation Date": ["2025-07-01", "2025-07-03"],
         "Status": ["Pending Acceptance", "In Progress"]
     }, use_container_width=True)
-
-import streamlit as st
-from streamlit_option_menu import option_menu
-import pandas as pd
-import re
-import datetime
-from io import BytesIO
-import time
-
-# Assuming google_utils.py and config.py are correctly set up
-from google_utils import (
-    read_from_spreadsheet,
-    find_or_create_spreadsheet,
-    update_spreadsheet_from_df,
-    upload_to_drive,
-    find_drive_item_by_name
-)
-from config import SMART_AUDIT_MASTER_DB_SHEET_NAME, MASTER_DRIVE_FOLDER_NAME
-
-# --- Helper Functions ---
-
-# IMPORTANT: This function requires the 'xlsxwriter' library.
-# Please ensure it is installed in your environment (e.g., run: pip install xlsxwriter)
-def generate_excel_template():
-    """Generates an in-memory Excel file template for download."""
-    template_df = pd.DataFrame({
-        "GSTIN": ["12ABCDE1234F5GH"],
-        "Trade Name": ["Sample Trade Name"],
-        "Category": ["Large"],
-        "Allocated Audit Group Number": [15],
-        "Allocated Circle": [7]
-    })
-    output = BytesIO()
-    # The engine='xlsxwriter' requires the library to be installed.
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        template_df.to_excel(writer, index=False, sheet_name='Allocations')
-    processed_data = output.getvalue()
-    return processed_data
-
-def validate_gstin(gstin):
-    """Validates the GSTIN format."""
-    if not gstin or not isinstance(gstin, str):
-        return False
-    # Corrected GSTIN regex. The original was too strict on the 14th character.
-    # This pattern allows any alphanumeric character in the 14th and 15th positions.
-    pattern = r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}[A-Z0-9]{1}[A-Z0-9]{1}$"
-    return re.match(pattern, gstin) is not None
-
-def get_current_financial_year():
-    """Gets the current financial year based on the system date."""
-    now = datetime.datetime.now()
-    if now.month >= 4:
-        return f"{now.year}-{now.year + 1}"
-    else:
-        return f"{now.year - 1}-{now.year}"
-
-# --- Main Dashboard Function ---
-
-def smart_audit_tracker_dashboard(drive_service, sheets_service):
-    """
-    Displays the main dashboard for the Smart Audit Tracker module.
-    This view is primarily for the Planning & Coordination Officer.
-    """
-    if st.button("⬅️ Back to e-MCM Dashboard", key="back_to_mcm_from_tracker"):
-        st.session_state.app_mode = "e-mcm"
-        st.rerun()
-
-    st.markdown("<h2 class='page-main-title'>Smart Audit Tracker</h2>", unsafe_allow_html=True)
-    st.markdown("<p class='page-app-subtitle'>Manage the complete lifecycle of audit assignments.</p>", unsafe_allow_html=True)
-
-    # --- Initialize Master DB Sheet ---
-    if 'master_db_sheet_id' not in st.session_state or not st.session_state.master_db_sheet_id:
-        with st.spinner("Initializing Smart Audit Master Database..."):
-            master_folder_id = st.session_state.get('master_drive_folder_id')
-            if master_folder_id:
-                sheet_id = find_or_create_spreadsheet(
-                    drive_service, sheets_service, SMART_AUDIT_MASTER_DB_SHEET_NAME, master_folder_id
-                )
-                st.session_state.master_db_sheet_id = sheet_id
-            else:
-                st.error("Master Drive Folder not found. Cannot initialize database.")
-                st.stop()
-    
-    master_db_sheet_id = st.session_state.get('master_db_sheet_id')
-
-    selected_tab = option_menu(
-        menu_title=None,
-        options=["Allocate Units to Groups", "Edit/Reassign Units", "Audit Lifecycle", "Commissioner View"],
-        icons=["person-plus-fill", "pencil-square", "diagram-3-fill", "person-video3"],
-        menu_icon="cast", default_index=0, orientation="horizontal",
-        styles={
-            "container": {"padding": "5px !important", "background-color": "#f0f2f6"},
-            "icon": {"color": "#dc3545", "font-size": "20px"},
-            "nav-link": {"font-size": "16px", "text-align": "center", "margin": "0px", "--hover-color": "#f8d7da"},
-            "nav-link-selected": {"background-color": "#dc3545", "color": "white"},
-        }
-    )
-
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-
-    if selected_tab == "Allocate Units to Groups":
-        render_allocate_units_tab(drive_service, sheets_service, master_db_sheet_id)
-    elif selected_tab == "Edit/Reassign Units":
-        render_reassign_units_tab(drive_service, sheets_service, master_db_sheet_id)
-    # ... other tabs
-    
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# --- Tab Rendering Functions ---
-
-def render_allocate_units_tab(drive_service, sheets_service, db_sheet_id):
-    """Renders the UI for allocating units."""
-    st.markdown("<h3>Allocate Units to Groups</h3>", unsafe_allow_html=True)
-    
-    # --- Guidance and Template Download ---
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        st.info("Upload an Excel sheet to allocate GSTIN units to audit groups and circles. Ensure the sheet follows the provided format.")
-    with c2:
-        st.download_button(
-            label="📥 Download Sample Excel",
-            data=generate_excel_template(),
-            file_name="allocation_template.xlsx",
-            mime="application/vnd.ms-excel",
-            use_container_width=True
-        )
-
-    with st.form("allocation_form", clear_on_submit=True):
-        # --- Form Fields ---
-        current_fy = get_current_financial_year()
-        fy_options = [f"{y}-{y+1}" for y in range(2023, datetime.datetime.now().year + 2)]
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            financial_year = st.selectbox("Financial Year", options=fy_options, index=fy_options.index(current_fy))
-            allocated_date = st.date_input("Office Order Allocation Date", value=datetime.date.today())
-        with col2:
-            uploaded_excel = st.file_uploader("Upload Excel Allocation File (.xlsx)", type=["xlsx"])
-            office_order_pdf = st.file_uploader("Upload Office Order PDF", type=["pdf"])
-
-        submitted = st.form_submit_button("Validate and Allocate Units", type="primary", use_container_width=True)
-
-    if submitted:
-        # --- Form Submission Logic ---
-        if not uploaded_excel:
-            st.error("Please upload the Excel allocation file.")
-        elif not office_order_pdf:
-            st.error("Please upload the office order PDF.")
-        elif not allocated_date:
-            st.error("Please select the allocation date.")
-        else:
-            process_allocation_upload(drive_service, sheets_service, db_sheet_id, uploaded_excel, office_order_pdf, financial_year, allocated_date)
-
-    # --- Display Previous Allocations ---
-    st.markdown("---")
-    st.markdown("<h4>Previously Allocated Batches</h4>", unsafe_allow_html=True)
-    with st.spinner("Loading allocation history..."):
-        master_df = read_from_spreadsheet(sheets_service, db_sheet_id)
-        
-        # *** FIX STARTS HERE ***
-        # Check if the DataFrame and required columns for grouping exist before proceeding.
-        required_cols_for_display = ['Financial Year', 'Allocated Date', 'Office Order PDF Path', 'Uploaded Date']
-        if master_df is not None and not master_df.empty and all(col in master_df.columns for col in required_cols_for_display):
-            # Display summary of allocations
-            alloc_summary = master_df.groupby(required_cols_for_display).size().reset_index(name='No of GSTINs Allocated')
-            alloc_summary = alloc_summary.sort_values(by="Uploaded Date", ascending=False)
-            alloc_summary['Office Order Link'] = alloc_summary['Office Order PDF Path'].apply(lambda x: f"[View PDF]({x})" if x else "No Link")
-            
-            st.dataframe(alloc_summary[[
-                'Financial Year', 'No of GSTINs Allocated', 'Allocated Date', 'Uploaded Date', 'Office Order Link'
-            ]], use_container_width=True, hide_index=True)
-        else:
-            # If DataFrame is empty or columns are missing, show info message.
-            st.info("No allocation history found or the database is being initialized.")
-        # *** FIX ENDS HERE ***
 
 
 # def process_allocation_upload(drive_service, sheets_service, db_sheet_id, excel_file, pdf_file, fin_year, alloc_date):
