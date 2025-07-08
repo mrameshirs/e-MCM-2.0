@@ -15,7 +15,7 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload, MediaIoBase
 from config import SCOPES, MASTER_DRIVE_FOLDER_NAME, MCM_PERIODS_FILENAME_ON_DRIVE, LOG_SHEET_FILENAME_ON_DRIVE, SMART_AUDIT_MASTER_DB_SHEET_NAME, SHARED_DRIVE_ID
 
 def get_google_services():
-    # This function remains the same
+    """Initializes and returns the Google Drive and Sheets service objects."""
     creds = None
     try:
         creds_dict = st.secrets["google_credentials"]
@@ -43,7 +43,7 @@ def get_google_services():
         return None, None
 
 def find_drive_item_by_name(drive_service, name, mime_type=None, parent_id=None):
-    # This function is updated to support searching within Shared Drives
+    """Finds a file or folder by name, supporting Shared Drives."""
     query = f"name = '{name}' and trashed = false"
     if mime_type:
         query += f" and mimeType = '{mime_type}'"
@@ -51,7 +51,6 @@ def find_drive_item_by_name(drive_service, name, mime_type=None, parent_id=None)
         query += f" and '{parent_id}' in parents"
     
     try:
-        # Add supportsAllDrives=True to search in Shared Drives
         response = drive_service.files().list(
             q=query, 
             spaces='drive', 
@@ -69,7 +68,7 @@ def find_drive_item_by_name(drive_service, name, mime_type=None, parent_id=None)
     return None
 
 def create_drive_folder(drive_service, folder_name, parent_id=None):
-    # This function is updated to support creating folders within Shared Drives
+    """Creates a folder, supporting Shared Drives."""
     try:
         file_metadata = {
             'name': folder_name,
@@ -78,7 +77,6 @@ def create_drive_folder(drive_service, folder_name, parent_id=None):
         if parent_id:
             file_metadata['parents'] = [parent_id]
 
-        # Add supportsAllDrives=True to create in Shared Drives
         folder = drive_service.files().create(
             body=file_metadata, 
             fields='id, webViewLink',
@@ -93,7 +91,7 @@ def create_drive_folder(drive_service, folder_name, parent_id=None):
         return None, None
 
 def initialize_drive_structure(drive_service):
-    # This function is completely rewritten to work with the configured Shared Drive
+    """Initializes the application's folder structure within the specified Shared Drive."""
     if not SHARED_DRIVE_ID or "PASTE" in SHARED_DRIVE_ID:
         st.error("CRITICAL: `SHARED_DRIVE_ID` is not configured in `config.py`. Please follow the setup instructions.")
         return False
@@ -121,7 +119,7 @@ def initialize_drive_structure(drive_service):
     return True
 
 def upload_to_drive(drive_service, file_content_or_path, folder_id, filename_on_drive):
-    # This function is updated to support uploading to Shared Drives
+    """Uploads a file to a specific folder, supporting Shared Drives."""
     try:
         file_metadata = {'name': filename_on_drive, 'parents': [folder_id]}
         media_body = None
@@ -133,7 +131,6 @@ def upload_to_drive(drive_service, file_content_or_path, folder_id, filename_on_
             st.error(f"Unsupported file content type for Google Drive upload: {type(file_content_or_path)}")
             return None, None
 
-        # Add supportsAllDrives=True to upload to Shared Drives
         request = drive_service.files().create(
             body=file_metadata,
             media_body=media_body,
@@ -150,7 +147,7 @@ def upload_to_drive(drive_service, file_content_or_path, folder_id, filename_on_
         return None, None
 
 def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=None):
-    # This function is updated to support moving new spreadsheets into a Shared Drive folder
+    """Creates a spreadsheet and moves it to a specific folder, supporting Shared Drives."""
     try:
         spreadsheet_body = {'properties': {'title': title}}
         spreadsheet = sheets_service.spreadsheets().create(body=spreadsheet_body,
@@ -158,7 +155,6 @@ def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=No
         spreadsheet_id = spreadsheet.get('spreadsheetId')
 
         if spreadsheet_id and drive_service and parent_folder_id:
-            # Move the newly created sheet to the correct folder inside the Shared Drive
             file = drive_service.files().get(fileId=spreadsheet_id, fields='parents').execute()
             previous_parents = ",".join(file.get('parents'))
             drive_service.files().update(
@@ -166,7 +162,7 @@ def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=No
                 addParents=parent_folder_id,
                 removeParents=previous_parents,
                 fields='id, parents',
-                supportsAllDrives=True  # Add support for Shared Drives
+                supportsAllDrives=True
             ).execute()
         return spreadsheet_id, spreadsheet.get('spreadsheetUrl')
     except HttpError as error:
@@ -176,42 +172,8 @@ def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=No
         st.error(f"An unexpected error occurred creating Spreadsheet: {e}")
         return None, None
 
-def find_or_create_log_sheet(drive_service, sheets_service, parent_folder_id):
-    # No changes needed here as it uses other updated functions
-    if 'log_sheet_id' in st.session_state and st.session_state.log_sheet_id:
-        return st.session_state.log_sheet_id
-
-    log_sheet_name = LOG_SHEET_FILENAME_ON_DRIVE
-    log_sheet_id = find_drive_item_by_name(drive_service, log_sheet_name,
-                                           mime_type='application/vnd.google-apps.spreadsheet',
-                                           parent_id=parent_folder_id)
-    if log_sheet_id:
-        st.session_state.log_sheet_id = log_sheet_id
-        return log_sheet_id
-    
-    st.info(f"Log sheet '{log_sheet_name}' not found. Creating it...")
-    spreadsheet_id, _ = create_spreadsheet(sheets_service, drive_service, log_sheet_name, parent_folder_id=parent_folder_id)
-    
-    if spreadsheet_id:
-        st.session_state.log_sheet_id = spreadsheet_id
-        header = [['Timestamp', 'Username', 'Role']]
-        body = {'values': header}
-        try:
-            sheets_service.spreadsheets().values().append(
-                spreadsheetId=spreadsheet_id, range='Sheet1!A1',
-                valueInputOption='USER_ENTERED', body=body
-            ).execute()
-            st.success(f"Log sheet '{log_sheet_name}' created successfully.")
-        except HttpError as error:
-            st.error(f"Failed to write header to new log sheet: {error}")
-            return None
-        return spreadsheet_id
-    else:
-        st.error(f"Fatal: Failed to create log sheet '{log_sheet_name}'. Logging will be disabled.")
-        return None
-
 def find_or_create_spreadsheet(drive_service, sheets_service, sheet_name, parent_folder_id):
-    # No changes needed here as it uses other updated functions
+    """Finds a spreadsheet by name or creates it with a header if it doesn't exist."""
     sheet_id = find_drive_item_by_name(drive_service, sheet_name,
                                        mime_type='application/vnd.google-apps.spreadsheet',
                                        parent_id=parent_folder_id)
@@ -222,11 +184,24 @@ def find_or_create_spreadsheet(drive_service, sheets_service, sheet_name, parent
     sheet_id, _ = create_spreadsheet(sheets_service, drive_service, sheet_name, parent_folder_id=parent_folder_id)
     
     if sheet_id:
-        header = [[
-            "GSTIN", "Trade Name", "Category", "Allocated Audit Group Number", 
-            "Allocated Circle", "Financial Year", "Allocated Date", "Uploaded Date", 
-            "Office Order PDF Path", "Reassigned Flag", "Old Group Number", "Old Circle Number"
-        ]]
+        # Define the header based on the sheet name
+        if sheet_name == SMART_AUDIT_MASTER_DB_SHEET_NAME:
+            header = [[
+                "GSTIN", "Trade Name", "Category", "Allocated Audit Group Number", 
+                "Allocated Circle", "Financial Year", "Allocated Date", "Uploaded Date", 
+                "Office Order PDF Path", "Reassigned Flag", "Old Group Number", "Old Circle Number"
+            ]]
+        elif sheet_name == LOG_SHEET_FILENAME_ON_DRIVE:
+             header = [['Timestamp', 'Username', 'Role']]
+        else: # Default or e-MCM header
+            header = [[
+                "Audit Group Number", "Audit Circle Number", "GSTIN", "Trade Name", "Category",
+                "Total Amount Detected (Overall Rs)", "Total Amount Recovered (Overall Rs)",
+                "Audit Para Number", "Audit Para Heading",
+                "Revenue Involved (Lakhs Rs)", "Revenue Recovered (Lakhs Rs)", "Status of para",
+                "DAR PDF URL", "Record Created Date"
+            ]]
+
         body = {'values': header}
         try:
             sheets_service.spreadsheets().values().append(
@@ -243,7 +218,7 @@ def find_or_create_spreadsheet(drive_service, sheets_service, sheet_name, parent
         return None
 
 def read_from_spreadsheet(sheets_service, spreadsheet_id, sheet_name="Sheet1"):
-    # This function does not need changes as it only reads data
+    """Reads an entire sheet into a pandas DataFrame, handling varying column counts."""
     try:
         result = sheets_service.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
@@ -281,7 +256,7 @@ def read_from_spreadsheet(sheets_service, spreadsheet_id, sheet_name="Sheet1"):
         return pd.DataFrame()
 
 def update_spreadsheet_from_df(sheets_service, spreadsheet_id, df_to_write):
-    # This function does not need changes as it only writes data
+    """Clears a sheet and updates it with data from a pandas DataFrame."""
     try:
         sheet_metadata = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
         first_sheet_title = sheet_metadata['sheets'][0]['properties']['title']
@@ -310,6 +285,7 @@ def update_spreadsheet_from_df(sheets_service, spreadsheet_id, df_to_write):
     except Exception as e:
         st.error(f"An unexpected error occurred while updating the Spreadsheet: {e}")
         return False
+
 # # google_utils.py
 # from datetime import datetime 
 # import streamlit as st
