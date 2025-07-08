@@ -61,8 +61,8 @@ def find_drive_item_by_name(drive_service, name, mime_type=None, parent_id=None)
             spaces='drive',
             fields='files(id, name)'
         ).execute()
-        items = response.get('files', [])
-        if items:
+       items = response.get('files', [])
+       if items:
             return items[0].get('id')
     except HttpError as error:
         st.warning(f"Error searching for '{name}' in Drive: {error}. This might be okay if the item is to be created.")
