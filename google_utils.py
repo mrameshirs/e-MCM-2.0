@@ -709,6 +709,42 @@ def test_permissions_debug(drive_service, sheets_service):
             st.info(f"Service account email: {user_info.get('emailAddress', 'Unknown')}")
         except:
             st.warning("Could not retrieve service account email")
+def test_root_spreadsheet_creation(sheets_service, drive_service):
+    """Test creating spreadsheet in root Drive"""
+    st.subheader("🧪 Test Spreadsheet Creation in Root")
+    
+    if st.button("Test Create in Root Drive"):
+        test_title = f"TEST_ROOT_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        with st.spinner("Testing..."):
+            try:
+                # Create without any parent folder
+                spreadsheet_body = {'properties': {'title': test_title}}
+                spreadsheet = sheets_service.spreadsheets().create(
+                    body=spreadsheet_body,
+                    fields='spreadsheetId,spreadsheetUrl'
+                ).execute()
+                
+                spreadsheet_id = spreadsheet.get('spreadsheetId')
+                spreadsheet_url = spreadsheet.get('spreadsheetUrl')
+                
+                if spreadsheet_id:
+                    st.success("✅ SUCCESS! Spreadsheet created in root Drive")
+                    st.info(f"**ID:** {spreadsheet_id}")
+                    st.info(f"**URL:** {spreadsheet_url}")
+                    
+                    # Clean up test file
+                    try:
+                        drive_service.files().delete(fileId=spreadsheet_id).execute()
+                        st.success("✅ Test file cleaned up")
+                    except:
+                        st.warning("⚠️ Test file created but not cleaned up")
+                        st.info("You can manually delete it from your Drive")
+                else:
+                    st.error("❌ No spreadsheet ID returned")
+                    
+            except Exception as e:
+                st.error(f"❌ Test failed: {e}")
 # from datetime import datetime 
 # import streamlit as st
 # import os
