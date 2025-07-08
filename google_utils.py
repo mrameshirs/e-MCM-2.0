@@ -436,7 +436,43 @@ def append_to_spreadsheet(sheets_service, spreadsheet_id, values_to_append):
     except Exception as e:
         st.error(f"Unexpected error appending to Spreadsheet: {e}")
         return None
-
+def delete_spreadsheet_rows(sheets_service, spreadsheet_id, sheet_id_gid, row_indices_to_delete):
+    # row_indices_to_delete are 0-based indices of the *data* rows (DataFrame iloc from read_from_spreadsheet)
+    if not row_indices_to_delete:
+        return True
+    requests = []
+    # Sort in descending order to avoid index shifting issues during deletion
+    for data_row_index in sorted(row_indices_to_delete, reverse=True):
+        # Sheet API uses 0-based indexing for rows *within the specified range*,
+        # but deleteDimension needs 0-based index relative to start of sheet if sheetId is used.
+        # If header is row 0 in API terms, data row 0 is sheet row 1.
+        # The 'startIndex' for deleteDimension is 0-based and exclusive of the header if sheet data starts from row 1 (0-indexed) after header.
+        # Assuming read_from_spreadsheet gives data starting from what would be sheet row index 1 (if header is 0).
+        # So, if `data_row_index` is 0 (first data row), it means the 2nd row in the sheet (1-indexed), which is row index 1 for the API.
+        sheet_row_start_index = data_row_index + 1 # If data starts at physical row 2 (index 1)
+        requests.append({
+            "deleteDimension": {
+                "range": {
+                    "sheetId": sheet_id_gid,
+                    "dimension": "ROWS",
+                    "startIndex": sheet_row_start_index, # This is the 0-based index of the row in the sheet (header is 0)
+                    "endIndex": sheet_row_start_index + 1
+                }
+            }
+        })
+    if requests:
+        try:
+            body = {'requests': requests}
+            sheets_service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id, body=body).execute()
+            return True
+        except HttpError as error:
+            st.error(f"An error occurred deleting rows from Spreadsheet: {error}")
+            return False
+        except Exception as e:
+            st.error(f"Unexpected error deleting rows: {e}")
+            return False
+    return True# # google_utils.py
 
 # # google_utils.py
 # from datetime import datetime 
