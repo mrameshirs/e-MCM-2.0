@@ -309,74 +309,38 @@ def upload_to_drive(drive_service, file_content_or_path, folder_id, filename_on_
 #         return None, None
 
 def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=None):
-    """Creates a spreadsheet with fallback options for permission issues."""
+    """Creates a spreadsheet using Drive API (which is working) instead of Sheets API."""
     try:
-        # Method 1: Try creating directly in target folder
+        # Use Drive API to create the spreadsheet file
+        file_metadata = {
+            'name': title,
+            'mimeType': 'application/vnd.google-apps.spreadsheet'
+        }
+        
         if parent_folder_id:
-            try:
-                spreadsheet_body = {
-                    'properties': {'title': title},
-                    'parents': [parent_folder_id]  # Try direct placement
-                }
-                spreadsheet = sheets_service.spreadsheets().create(
-                    body=spreadsheet_body,
-                    fields='spreadsheetId,spreadsheetUrl'
-                ).execute()
-                spreadsheet_id = spreadsheet.get('spreadsheetId')
-                if spreadsheet_id:
-                    st.success(f"✅ Spreadsheet '{title}' created directly in target folder")
-                    return spreadsheet_id, spreadsheet.get('spreadsheetUrl')
-            except:
-                st.info("Direct folder creation failed, trying alternative method...")
+            file_metadata['parents'] = [parent_folder_id]
         
-        # Method 2: Create in root, then move
-        spreadsheet_body = {'properties': {'title': title}}
-        spreadsheet = sheets_service.spreadsheets().create(
-            body=spreadsheet_body,
-            fields='spreadsheetId,spreadsheetUrl'
+        # Create using Drive API (this is working for you)
+        file = drive_service.files().create(
+            body=file_metadata,
+            fields='id, webViewLink, name'
         ).execute()
-        spreadsheet_id = spreadsheet.get('spreadsheetId')
         
-        if not spreadsheet_id:
-            raise Exception("No spreadsheet ID returned")
+        spreadsheet_id = file.get('id')
         
-        # Try to move to target folder
-        if parent_folder_id and drive_service:
-            try:
-                file = drive_service.files().get(fileId=spreadsheet_id, fields='parents').execute()
-                previous_parents = ",".join(file.get('parents', []))
-                
-                drive_service.files().update(
-                    fileId=spreadsheet_id,
-                    addParents=parent_folder_id,
-                    removeParents=previous_parents,
-                    fields='id, parents'
-                ).execute()
-                st.success(f"✅ Spreadsheet '{title}' created and moved to target folder")
-            except Exception as move_error:
-                st.warning(f"⚠️ Spreadsheet created in root Drive (couldn't move to folder)")
-                st.info("You can manually move it to the correct folder if needed")
-                # Still return success since spreadsheet was created
+        if spreadsheet_id:
+            # Generate the correct spreadsheet URL
+            spreadsheet_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
+            st.success(f"✅ Spreadsheet '{title}' created successfully using Drive API")
+            return spreadsheet_id, spreadsheet_url
         else:
-            st.success(f"✅ Spreadsheet '{title}' created in root Drive")
+            raise Exception("No spreadsheet ID returned from Drive API")
             
-        return spreadsheet_id, spreadsheet.get('spreadsheetUrl')
-        
-    except Exception as error:
-        st.error(f"❌ Failed to create spreadsheet '{title}': {error}")
-        
-        # Method 3: Final fallback - create with minimal options
-        try:
-            st.info("Trying minimal creation method...")
-            simple_body = {'properties': {'title': f"{title}_fallback"}}
-            fallback_sheet = sheets_service.spreadsheets().create(body=simple_body).execute()
-            fallback_id = fallback_sheet.get('spreadsheetId')
-            if fallback_id:
-                st.warning(f"⚠️ Created fallback spreadsheet: {title}_fallback")
-                return fallback_id, fallback_sheet.get('spreadsheetUrl')
-        except Exception as fallback_error:
-            st.error(f"❌ Even fallback creation failed: {fallback_error}")
-        
+    except HttpError as error:
+        st.error(f"Drive API Error creating spreadsheet: {error}")
+        return None, None
+    except Exception as e:
+        st.error(f"Unexpected error creating spreadsheet: {e}")
         return None, None
 def find_or_create_log_sheet(drive_service, sheets_service, parent_folder_id):
     """Finds the log sheet or creates it if it doesn't exist."""
