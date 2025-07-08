@@ -144,6 +144,8 @@ def pco_dashboard(drive_service, sheets_service):
                                 st.error("Failed to save MCM period configuration to Drive.")
                         else:
                             st.error("Failed to create Drive folder or Spreadsheet.")
+        st.markdown("---")
+        test_permissions_debug(drive_service, sheets_service)
 
     # ========================== MANAGE MCM PERIODS TAB ==========================
     elif selected_tab == "Manage MCM Periods":
