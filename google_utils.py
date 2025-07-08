@@ -93,8 +93,51 @@ def create_drive_folder(drive_service, folder_name, parent_id=None):
         st.error(f"Unexpected error creating Drive folder '{folder_name}': {e}")
         return None, None
 
-def initialize_drive_structure(drive_service):
+# def initialize_drive_structure(drive_service):
     
+#     """
+#     Initializes the entire application folder and file structure within the specified Shared Drive.
+#     This is the central point of control for ensuring all files are created in the correct location.
+#     """
+#     if not SHARED_DRIVE_ID or "PASTE" in SHARED_DRIVE_ID:
+#         st.error("CRITICAL: `SHARED_DRIVE_ID` is not configured in `config.py`. Please follow the setup instructions.")
+#         return False
+
+#     # 1. Find or Create the Master Folder inside the Shared Drive
+#     master_id = st.session_state.get('master_drive_folder_id')
+#     if not master_id:
+#         master_id = find_drive_item_by_name(drive_service, MASTER_DRIVE_FOLDER_NAME,
+#                                             'application/vnd.google-apps.folder', parent_id=SHARED_DRIVE_ID)
+#         if not master_id:
+#             st.info(f"Master folder '{MASTER_DRIVE_FOLDER_NAME}' not found in Shared Drive, creating it...")
+#             master_id, _ = create_drive_folder(drive_service, MASTER_DRIVE_FOLDER_NAME, parent_id=SHARED_DRIVE_ID)
+#             if not master_id:
+#                 st.error(f"Fatal: Failed to create master folder '{MASTER_DRIVE_FOLDER_NAME}'. Cannot proceed.")
+#                 return False
+#         st.session_state.master_drive_folder_id = master_id
+
+#     if not st.session_state.master_drive_folder_id:
+#         st.error("Master Drive folder ID could not be established. Cannot proceed.")
+#         return False
+
+#     # 2. Find or Create the Log Sheet inside the Master Folder
+#     if not st.session_state.get('log_sheet_id'):
+#         log_sheet_id = find_or_create_log_sheet(drive_service, st.session_state.sheets_service, st.session_state.master_drive_folder_id)
+#         if not log_sheet_id:
+#             st.error("Failed to create the application log sheet. Logging will be disabled.")
+#         st.session_state.log_sheet_id = log_sheet_id
+
+#     # 3. Find or Create the MCM Periods Config File inside the Master Folder
+#     if not st.session_state.get('mcm_periods_drive_file_id'):
+#         mcm_file_id = find_drive_item_by_name(drive_service, MCM_PERIODS_FILENAME_ON_DRIVE, parent_id=st.session_state.master_drive_folder_id)
+#         if not mcm_file_id:
+#             st.info(f"MCM Periods config file '{MCM_PERIODS_FILENAME_ON_DRIVE}' not found, creating it...")
+#             save_mcm_periods(drive_service, {}) # Create an empty config file
+#         else:
+#             st.session_state.mcm_periods_drive_file_id = mcm_file_id
+
+#     return True
+def initialize_drive_structure(drive_service, sheets_service):
     """
     Initializes the entire application folder and file structure within the specified Shared Drive.
     This is the central point of control for ensuring all files are created in the correct location.
@@ -122,7 +165,7 @@ def initialize_drive_structure(drive_service):
 
     # 2. Find or Create the Log Sheet inside the Master Folder
     if not st.session_state.get('log_sheet_id'):
-        log_sheet_id = find_or_create_log_sheet(drive_service, st.session_state.sheets_service, st.session_state.master_drive_folder_id)
+        log_sheet_id = find_or_create_log_sheet(drive_service, sheets_service, st.session_state.master_drive_folder_id)
         if not log_sheet_id:
             st.error("Failed to create the application log sheet. Logging will be disabled.")
         st.session_state.log_sheet_id = log_sheet_id
