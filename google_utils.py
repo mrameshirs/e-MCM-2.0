@@ -361,101 +361,152 @@ def append_to_spreadsheet(sheets_service, spreadsheet_id, values_to_append):
         st.error(f"Unexpected error appending to Spreadsheet: {e}")
         return None
 
+# Fullyh working code Commented to read spreadsheets in general 
+#def read_from_spreadsheet(sheets_service, spreadsheet_id, sheet_name="Sheet1"):
+#     try:
+#         result = sheets_service.spreadsheets().values().get(
+#             spreadsheetId=spreadsheet_id,
+#             range=sheet_name  # Read the whole sheet
+#         ).execute()
+#         values = result.get('values', [])
+
+#         if not values:
+#             return pd.DataFrame() # Return empty DataFrame if sheet is empty
+
+#         expected_cols_header = [ # This is the current, correct 14-column header
+#             "Audit Group Number", "Audit Circle Number", "GSTIN", "Trade Name", "Category",
+#             "Total Amount Detected (Overall Rs)", "Total Amount Recovered (Overall Rs)",
+#             "Audit Para Number", "Audit Para Heading",
+#             "Revenue Involved (Lakhs Rs)", "Revenue Recovered (Lakhs Rs)", "Status of para",
+#             "DAR PDF URL", "Record Created Date"
+#         ]
+
+#         header_in_sheet = values[0]
+#         data_rows = values[1:]
+
+#         if not data_rows : # Only header or empty after header
+#             if header_in_sheet == expected_cols_header:
+#                 return pd.DataFrame(columns=expected_cols_header) # Correct header, no data
+#             else: # Potentially incorrect header, or just some other content
+#                  # Try to return what's there, might be messy, or return empty with expected if too different
+#                 if len(header_in_sheet) > 5 : # Heuristic: if it looks somewhat like a header
+#                     return pd.DataFrame(columns=header_in_sheet)
+#                 return pd.DataFrame(columns=expected_cols_header) # Fallback to expected if header is very short/unlikely
+
+#         num_cols_in_header = len(header_in_sheet)
+#         num_cols_in_first_data_row = len(data_rows[0]) if data_rows else 0 # Check first data row
+
+#         if header_in_sheet == expected_cols_header:
+#             # Ideal case: Header matches expected.
+#             # Ensure all data rows have a consistent number of columns. Pad if necessary.
+#             processed_data_rows = []
+#             for row in data_rows:
+#                 if len(row) < len(expected_cols_header):
+#                     processed_data_rows.append(row + [None] * (len(expected_cols_header) - len(row)))
+#                 elif len(row) > len(expected_cols_header):
+#                     processed_data_rows.append(row[:len(expected_cols_header)])
+#                 else:
+#                     processed_data_rows.append(row)
+#             return pd.DataFrame(processed_data_rows, columns=header_in_sheet)
+
+#         elif num_cols_in_first_data_row == len(expected_cols_header):
+#             # Data structure matches expected 14 columns, but header in sheet might be old/different.
+#             # Prioritize using expected_cols_header for the DataFrame.
+#             st.warning(f"Spreadsheet header mismatched ({num_cols_in_header} cols), but data rows appear to have the current expected {len(expected_cols_header)} columns. Applying current headers.")
+#             # Pad/truncate all data rows to match expected_cols_header length
+#             standardized_data_rows = []
+#             for row in data_rows:
+#                 if len(row) < len(expected_cols_header):
+#                     standardized_data_rows.append(row + [None] * (len(expected_cols_header) - len(row)))
+#                 elif len(row) > len(expected_cols_header):
+#                     standardized_data_rows.append(row[:len(expected_cols_header)])
+#                 else:
+#                     standardized_data_rows.append(row)
+#             return pd.DataFrame(standardized_data_rows, columns=expected_cols_header)
+
+#         elif num_cols_in_header == num_cols_in_first_data_row:
+#             # Header is different from expected, but consistent with data. Use sheet's header.
+#             #st.warning(f"Spreadsheet header ({num_cols_in_header} cols) differs from expected ({len(expected_cols_header)} cols), but is consistent with data rows. Using header from sheet: {header_in_sheet}")
+#             return pd.DataFrame(data_rows, columns=header_in_sheet)
+#         else:
+#             # Significant mismatch, e.g. header is 12, data is 14.
+#             # This was the problematic case. Try to use expected_cols_header if data matches it.
+#             error_message = (f"Spreadsheet structure conflict: Header has {num_cols_in_header} columns, "
+#                              f"first data row has {num_cols_in_first_data_row} columns. "
+#                              f"Expected {len(expected_cols_header)} columns based on current app version.")
+#             st.error(error_message)
+#             # Fallback: return raw values, which might lead to issues upstream, or an empty DF with expected cols.
+#             # For safety, let's try to build a DataFrame with expected columns and fill with what we can.
+#             st.info("Attempting to load data with current expected columns. Data might be misaligned.")
+#             try:
+#                 # Pad/truncate all data rows to match expected_cols_header length
+#                 standardized_data_rows_fallback = []
+#                 for row_idx, row_val in enumerate(data_rows):
+#                     new_row = [None] * len(expected_cols_header)
+#                     for i in range(min(len(row_val), len(expected_cols_header))):
+#                         new_row[i] = row_val[i]
+#                     standardized_data_rows_fallback.append(new_row)
+#                 return pd.DataFrame(standardized_data_rows_fallback, columns=expected_cols_header)
+#             except Exception as fallback_e:
+#                 st.error(f"Fallback data loading also failed: {fallback_e}")
+#                 return pd.DataFrame(columns=expected_cols_header) # Empty DF with correct columns
+
+#     except HttpError as error:
+#         st.error(f"An API error occurred reading from Spreadsheet: {error}")
+#         return pd.DataFrame(columns=expected_cols_header) # Return empty DF with expected structure
+#     except Exception as e:
+#         st.error(f"Unexpected error reading from Spreadsheet: {e}")
+#         return pd.DataFrame(columns=expected_cols_header) # Return empty DF with expected structure
 def read_from_spreadsheet(sheets_service, spreadsheet_id, sheet_name="Sheet1"):
+    """
+    Reads an entire sheet into a pandas DataFrame, using the first row as the header.
+    This version is robust and handles sheets with varying column counts.
+    """
     try:
         result = sheets_service.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
-            range=sheet_name  # Read the whole sheet
+            range=sheet_name
         ).execute()
         values = result.get('values', [])
 
         if not values:
-            return pd.DataFrame() # Return empty DataFrame if sheet is empty
+            # If the sheet is completely empty, return an empty DataFrame.
+            return pd.DataFrame()
 
-        expected_cols_header = [ # This is the current, correct 14-column header
-            "Audit Group Number", "Audit Circle Number", "GSTIN", "Trade Name", "Category",
-            "Total Amount Detected (Overall Rs)", "Total Amount Recovered (Overall Rs)",
-            "Audit Para Number", "Audit Para Heading",
-            "Revenue Involved (Lakhs Rs)", "Revenue Recovered (Lakhs Rs)", "Status of para",
-            "DAR PDF URL", "Record Created Date"
-        ]
+        # Use the first row as header and the rest as data.
+        header = values[0]
+        data = values[1:]
+        
+        # If there's only a header row and no data, return an empty DF with the correct columns.
+        if not data:
+            return pd.DataFrame(columns=header)
 
-        header_in_sheet = values[0]
-        data_rows = values[1:]
+        # To handle rows that might have fewer columns than the header, we pad them with None.
+        # This prevents errors when creating the DataFrame.
+        num_cols = len(header)
+        processed_data = []
+        for row in data:
+            # Create a new copy of the row to avoid modifying the original list
+            new_row = list(row)
+            # Pad the row with None if it's shorter than the header
+            if len(new_row) < num_cols:
+                new_row.extend([None] * (num_cols - len(new_row)))
+            # Truncate the row if it's longer than the header
+            elif len(new_row) > num_cols:
+                new_row = new_row[:num_cols]
+            processed_data.append(new_row)
 
-        if not data_rows : # Only header or empty after header
-            if header_in_sheet == expected_cols_header:
-                return pd.DataFrame(columns=expected_cols_header) # Correct header, no data
-            else: # Potentially incorrect header, or just some other content
-                 # Try to return what's there, might be messy, or return empty with expected if too different
-                if len(header_in_sheet) > 5 : # Heuristic: if it looks somewhat like a header
-                    return pd.DataFrame(columns=header_in_sheet)
-                return pd.DataFrame(columns=expected_cols_header) # Fallback to expected if header is very short/unlikely
-
-        num_cols_in_header = len(header_in_sheet)
-        num_cols_in_first_data_row = len(data_rows[0]) if data_rows else 0 # Check first data row
-
-        if header_in_sheet == expected_cols_header:
-            # Ideal case: Header matches expected.
-            # Ensure all data rows have a consistent number of columns. Pad if necessary.
-            processed_data_rows = []
-            for row in data_rows:
-                if len(row) < len(expected_cols_header):
-                    processed_data_rows.append(row + [None] * (len(expected_cols_header) - len(row)))
-                elif len(row) > len(expected_cols_header):
-                    processed_data_rows.append(row[:len(expected_cols_header)])
-                else:
-                    processed_data_rows.append(row)
-            return pd.DataFrame(processed_data_rows, columns=header_in_sheet)
-
-        elif num_cols_in_first_data_row == len(expected_cols_header):
-            # Data structure matches expected 14 columns, but header in sheet might be old/different.
-            # Prioritize using expected_cols_header for the DataFrame.
-            st.warning(f"Spreadsheet header mismatched ({num_cols_in_header} cols), but data rows appear to have the current expected {len(expected_cols_header)} columns. Applying current headers.")
-            # Pad/truncate all data rows to match expected_cols_header length
-            standardized_data_rows = []
-            for row in data_rows:
-                if len(row) < len(expected_cols_header):
-                    standardized_data_rows.append(row + [None] * (len(expected_cols_header) - len(row)))
-                elif len(row) > len(expected_cols_header):
-                    standardized_data_rows.append(row[:len(expected_cols_header)])
-                else:
-                    standardized_data_rows.append(row)
-            return pd.DataFrame(standardized_data_rows, columns=expected_cols_header)
-
-        elif num_cols_in_header == num_cols_in_first_data_row:
-            # Header is different from expected, but consistent with data. Use sheet's header.
-            #st.warning(f"Spreadsheet header ({num_cols_in_header} cols) differs from expected ({len(expected_cols_header)} cols), but is consistent with data rows. Using header from sheet: {header_in_sheet}")
-            return pd.DataFrame(data_rows, columns=header_in_sheet)
-        else:
-            # Significant mismatch, e.g. header is 12, data is 14.
-            # This was the problematic case. Try to use expected_cols_header if data matches it.
-            error_message = (f"Spreadsheet structure conflict: Header has {num_cols_in_header} columns, "
-                             f"first data row has {num_cols_in_first_data_row} columns. "
-                             f"Expected {len(expected_cols_header)} columns based on current app version.")
-            st.error(error_message)
-            # Fallback: return raw values, which might lead to issues upstream, or an empty DF with expected cols.
-            # For safety, let's try to build a DataFrame with expected columns and fill with what we can.
-            st.info("Attempting to load data with current expected columns. Data might be misaligned.")
-            try:
-                # Pad/truncate all data rows to match expected_cols_header length
-                standardized_data_rows_fallback = []
-                for row_idx, row_val in enumerate(data_rows):
-                    new_row = [None] * len(expected_cols_header)
-                    for i in range(min(len(row_val), len(expected_cols_header))):
-                        new_row[i] = row_val[i]
-                    standardized_data_rows_fallback.append(new_row)
-                return pd.DataFrame(standardized_data_rows_fallback, columns=expected_cols_header)
-            except Exception as fallback_e:
-                st.error(f"Fallback data loading also failed: {fallback_e}")
-                return pd.DataFrame(columns=expected_cols_header) # Empty DF with correct columns
+        df = pd.DataFrame(processed_data, columns=header)
+        return df
 
     except HttpError as error:
         st.error(f"An API error occurred reading from Spreadsheet: {error}")
-        return pd.DataFrame(columns=expected_cols_header) # Return empty DF with expected structure
+        # Return an empty DataFrame on error to prevent crashes upstream.
+        return pd.DataFrame()
     except Exception as e:
-        st.error(f"Unexpected error reading from Spreadsheet: {e}")
-        return pd.DataFrame(columns=expected_cols_header) # Return empty DF with expected structure
+        st.error(f"An unexpected error occurred while reading the Spreadsheet: {e}")
+        # Return an empty DataFrame on any other error.
+        return pd.DataFrame()
 
 def delete_spreadsheet_rows(sheets_service, spreadsheet_id, sheet_id_gid, row_indices_to_delete):
     # row_indices_to_delete are 0-based indices of the *data* rows (DataFrame iloc from read_from_spreadsheet)
