@@ -13,7 +13,7 @@ from ui_pco_reports import pco_reports_dashboard
 # Assuming google_utils.py and config.py are in the same directory and correctly set up
 from google_utils import (
     load_mcm_periods, save_mcm_periods, create_drive_folder,
-    create_spreadsheet, read_from_spreadsheet,update_spreadsheet_from_df
+    create_spreadsheet, read_from_spreadsheet,update_spreadsheet_from_df,test_permissions_debug
 )
 from config import USER_CREDENTIALS, MCM_PERIODS_FILENAME_ON_DRIVE
 
