@@ -175,6 +175,103 @@ def render_allocate_units_tab(drive_service, sheets_service, db_sheet_id):
         # *** FIX ENDS HERE ***
 
 
+# def process_allocation_upload(drive_service, sheets_service, db_sheet_id, excel_file, pdf_file, fin_year, alloc_date):
+#     """Validates and processes the uploaded allocation files."""
+#     with st.spinner("Processing file... This may take a moment."):
+#         try:
+#             df = pd.read_excel(excel_file)
+#             master_df = read_from_spreadsheet(sheets_service, db_sheet_id)
+#             if master_df is None: # Handle case where sheet is new/unreadable
+#                 master_df = pd.DataFrame()
+
+#         except Exception as e:
+#             st.error(f"Error reading Excel file: {e}")
+#             return
+
+#         errors = []
+#         valid_rows = []
+#         required_cols = ["GSTIN", "Trade Name", "Category", "Allocated Circle"]
+        
+#         # --- Validation Loop ---
+#         for col in required_cols:
+#             if col not in df.columns:
+#                 errors.append(f"Missing mandatory column in Excel: '{col}'")
+        
+#         if errors:
+#             for error in errors: st.error(error)
+#             return
+
+#         for index, row in df.iterrows():
+#             gstin = str(row.get("GSTIN", "")).strip()
+#             # Validation checks
+#             if not validate_gstin(gstin):
+#                 errors.append(f"Row {index + 2}: Invalid GSTIN format for '{gstin}'.")
+#                 continue
+#             if not row.get("Trade Name"):
+#                 errors.append(f"Row {index + 2}: 'Trade Name' cannot be empty.")
+#             if row.get("Category") not in ["Large", "Medium", "Small"]:
+#                 errors.append(f"Row {index + 2}: 'Category' must be one of 'Large', 'Medium', 'Small'.")
+            
+#             try:
+#                 circle = int(row.get("Allocated Circle"))
+#                 if not (1 <= circle <= 10):
+#                     errors.append(f"Row {index + 2}: 'Allocated Circle' must be an integer between 1 and 10.")
+#             except (ValueError, TypeError):
+#                 errors.append(f"Row {index + 2}: 'Allocated Circle' must be a valid integer.")
+
+#             if 'Allocated Audit Group Number' in row and pd.notna(row['Allocated Audit Group Number']):
+#                 try:
+#                     group = int(row['Allocated Audit Group Number'])
+#                     if not (1 <= group <= 30):
+#                         errors.append(f"Row {index + 2}: 'Allocated Audit Group Number' must be an integer between 1 and 30.")
+#                 except (ValueError, TypeError):
+#                     errors.append(f"Row {index + 2}: 'Allocated Audit Group Number' must be a valid integer.")
+             
+#             # Duplicate check in master DB
+#             if not master_df.empty and 'GSTIN' in master_df.columns and gstin in master_df[master_df['Financial Year'] == fin_year]['GSTIN'].values:
+#                  errors.append(f"Row {index + 2}: GSTIN '{gstin}' already exists for {fin_year}. Use the Reassign option to update.")
+#                  continue
+            
+#             # Check for errors before adding to valid_rows
+#             current_row_errors = [e for e in errors if e.startswith(f"Row {index + 2}")]
+#             if not current_row_errors:
+#                 valid_rows.append(row)
+
+#         if errors:
+#             st.error("Validation failed. Please correct the errors below and re-upload:")
+#             for error in errors:
+#                 st.write(error)
+#             return
+        
+#         # --- Upload PDF and Save Data ---
+#         st.info("Validation successful. Uploading office order and saving data...")
+#         master_folder_id = st.session_state.get('master_drive_folder_id')
+#         pdf_filename = f"OfficeOrder_{fin_year.replace('-', '_')}_{int(time.time())}.pdf"
+#         pdf_id, pdf_url = upload_to_drive(drive_service, pdf_file.getvalue(), master_folder_id, pdf_filename)
+
+#         if not pdf_url:
+#             st.error("Failed to upload Office Order PDF. Aborting data save.")
+#             return
+
+#         new_data_df = pd.DataFrame(valid_rows)
+#         new_data_df['Financial Year'] = fin_year
+#         new_data_df['Allocated Date'] = alloc_date.strftime("%Y-%m-%d")
+#         new_data_df['Uploaded Date'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+#         new_data_df['Office Order PDF Path'] = pdf_url
+#         new_data_df['Reassigned Flag'] = False
+#         new_data_df['Old Group Number'] = None
+#         new_data_df['Old Circle Number'] = None
+
+#         # Combine with master and save
+#         final_df = pd.concat([master_df, new_data_df], ignore_index=True)
+#         success = update_spreadsheet_from_df(sheets_service, db_sheet_id, final_df)
+
+#         if success:
+#             st.success("Excel data validated and saved successfully!")
+#             st.balloons()
+#         else:
+#             st.error("Failed to save data to the master database.")
+
 def process_allocation_upload(drive_service, sheets_service, db_sheet_id, excel_file, pdf_file, fin_year, alloc_date):
     """Validates and processes the uploaded allocation files."""
     with st.spinner("Processing file... This may take a moment."):
@@ -187,6 +284,13 @@ def process_allocation_upload(drive_service, sheets_service, db_sheet_id, excel_
         except Exception as e:
             st.error(f"Error reading Excel file: {e}")
             return
+
+        # *** MODIFICATION IS HERE ***
+        # Define columns needed for the duplicate check.
+        required_cols_for_check = ['GSTIN', 'Financial Year']
+        # Check if the master_df is not empty and contains the necessary columns.
+        can_check_duplicates = not master_df.empty and all(col in master_df.columns for col in required_cols_for_check)
+        # *** END MODIFICATION ***
 
         errors = []
         valid_rows = []
@@ -226,11 +330,13 @@ def process_allocation_upload(drive_service, sheets_service, db_sheet_id, excel_
                         errors.append(f"Row {index + 2}: 'Allocated Audit Group Number' must be an integer between 1 and 30.")
                 except (ValueError, TypeError):
                     errors.append(f"Row {index + 2}: 'Allocated Audit Group Number' must be a valid integer.")
-
-            # Duplicate check in master DB
-            if not master_df.empty and 'GSTIN' in master_df.columns and gstin in master_df[master_df['Financial Year'] == fin_year]['GSTIN'].values:
+            
+            # *** MODIFICATION IS HERE ***
+            # Duplicate check in master DB is now conditional
+            if can_check_duplicates and gstin in master_df[master_df['Financial Year'] == fin_year]['GSTIN'].values:
                  errors.append(f"Row {index + 2}: GSTIN '{gstin}' already exists for {fin_year}. Use the Reassign option to update.")
                  continue
+            # *** END MODIFICATION ***
             
             # Check for errors before adding to valid_rows
             current_row_errors = [e for e in errors if e.startswith(f"Row {index + 2}")]
@@ -271,7 +377,6 @@ def process_allocation_upload(drive_service, sheets_service, db_sheet_id, excel_
             st.balloons()
         else:
             st.error("Failed to save data to the master database.")
-
 
 def render_reassign_units_tab(drive_service, sheets_service, db_sheet_id):
     """Renders the UI for editing and reassigning units."""
