@@ -1,5 +1,6 @@
 # ui_smart_audit_tracker.py
 import streamlit as st
+from streamlit_option_menu import option_menu
 import pandas as pd
 import re
 import datetime
@@ -78,9 +79,47 @@ def smart_audit_tracker_dashboard(drive_service, sheets_service):
     
     master_db_sheet_id = st.session_state.get('master_db_sheet_id')
 
-    # --- New Tab-based Layout ---
-    st.markdown("<h3>Manage/Track Unit Allocations</h3>", unsafe_allow_html=True)
+    # --- Restored Main Tab Layout ---
+    selected_main_tab = option_menu(
+        menu_title=None,
+        options=["Manage Allocations", "Audit Lifecycle", "Commissioner Dashboard"],
+        icons=["pencil-fill", "diagram-3-fill", "person-video3"],
+        menu_icon="cast",
+        default_index=0,
+        orientation="horizontal",
+        styles={
+            "container": {"padding": "5px !important", "background-color": "#f0f2f6"},
+            "icon": {"color": "#dc3545", "font-size": "20px"},
+            "nav-link": {"font-size": "16px", "text-align": "center", "margin": "0px", "--hover-color": "#f8d7da"},
+            "nav-link-selected": {"background-color": "#dc3545", "color": "white"},
+        }
+    )
+
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+
+    if selected_main_tab == "Manage Allocations":
+        render_manage_allocations_section(drive_service, sheets_service, master_db_sheet_id)
+    elif selected_main_tab == "Audit Lifecycle":
+        st.header("Track Audit Progress Lifecycle")
+        st.info("This section will provide a comprehensive view of the audit status for each allocated unit, from assignment to completion.")
+        st.selectbox("Select Audit Group to view lifecycle", options=[f"Group {i}" for i in range(1, 31)])
+    elif selected_main_tab == "Commissioner Dashboard":
+        st.header("Commissioner's Dashboard")
+        st.info("This section will display high-level summaries, statistics, and visualizations for executive oversight.")
+        st.metric("Total Units Under Audit", "150")
+        st.metric("Audits Completed This Month", "25")
+        st.metric("Revenue Detected (MTD)", "₹1.2 Cr")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# --- Section Rendering Functions ---
+
+def render_manage_allocations_section(drive_service, sheets_service, db_sheet_id):
+    """Renders the sub-tabs for managing unit allocations."""
+    st.markdown("<h3>Manage Unit Allocations</h3>", unsafe_allow_html=True)
     
+    # Using st.tabs for the sub-menu inside the main tab
     tab1, tab2, tab3, tab4 = st.tabs([
         "📝 Allocate Units", 
         "✏️ Edit/Reassign Units", 
@@ -89,19 +128,20 @@ def smart_audit_tracker_dashboard(drive_service, sheets_service):
     ])
 
     with tab1:
-        render_allocate_units_tab(drive_service, sheets_service, master_db_sheet_id)
+        render_allocate_units_tab(drive_service, sheets_service, db_sheet_id)
     with tab2:
-        render_reassign_units_tab(drive_service, sheets_service, master_db_sheet_id)
+        render_reassign_units_tab(drive_service, sheets_service, db_sheet_id)
     with tab3:
-        render_view_assigned_units_tab(sheets_service, master_db_sheet_id)
+        render_view_assigned_units_tab(sheets_service, db_sheet_id)
     with tab4:
-        render_delete_units_tab(drive_service, sheets_service, master_db_sheet_id)
+        render_delete_units_tab(drive_service, sheets_service, db_sheet_id)
 
 
-# --- Tab Rendering Functions ---
+# --- Sub-Tab Rendering Functions ---
 
 def render_allocate_units_tab(drive_service, sheets_service, db_sheet_id):
     """Renders the UI for allocating units."""
+    st.subheader("Allocate New Units via Excel Upload")
     st.info("Upload an Excel sheet to allocate GSTIN units to audit groups and circles. Ensure the sheet follows the provided format.")
     
     st.download_button(
@@ -118,7 +158,6 @@ def render_allocate_units_tab(drive_service, sheets_service, db_sheet_id):
         col1, col2 = st.columns(2)
         with col1:
             financial_year = st.selectbox("Financial Year", options=fy_options, index=fy_options.index(current_fy))
-            # Date is now mandatory, no default value
             allocated_date = st.date_input("Office Order Allocation Date")
         with col2:
             uploaded_excel = st.file_uploader("Upload Excel Allocation File (.xlsx)", type=["xlsx"])
@@ -127,7 +166,6 @@ def render_allocate_units_tab(drive_service, sheets_service, db_sheet_id):
         submitted = st.form_submit_button("Validate and Allocate Units", type="primary", use_container_width=True)
 
     if submitted:
-        # Mandatory date check
         if not allocated_date:
             st.error("Please select the Office Order Allocation Date.")
         elif not uploaded_excel:
@@ -139,6 +177,7 @@ def render_allocate_units_tab(drive_service, sheets_service, db_sheet_id):
 
 def render_reassign_units_tab(drive_service, sheets_service, db_sheet_id):
     """Renders the UI for editing and reassigning units."""
+    st.subheader("Edit or Reassign Unit Allocation")
     st.info("Search for a GSTIN to edit or reassign its audit group and circle. Ensure you upload the reallocation office order PDF.")
 
     with st.form("search_gstin_form"):
@@ -168,7 +207,6 @@ def render_reassign_units_tab(drive_service, sheets_service, db_sheet_id):
             st.session_state.show_reassign_form = False
 
     if st.session_state.get('show_reassign_form', False):
-        # Reassignment form logic (remains the same)
         details = st.session_state.found_gstin_details
         st.markdown("---")
         st.write(f"**Editing Details for GSTIN:** `{details['GSTIN']}`")
@@ -199,6 +237,7 @@ def render_reassign_units_tab(drive_service, sheets_service, db_sheet_id):
 
 def render_view_assigned_units_tab(sheets_service, db_sheet_id):
     """Renders the UI for viewing and downloading assigned units."""
+    st.subheader("View and Download Assigned Units")
     st.info("Select a financial year to view all assigned units. You can download the displayed data as an Excel file.")
     
     master_df = read_from_spreadsheet(sheets_service, db_sheet_id)
@@ -224,9 +263,10 @@ def render_view_assigned_units_tab(sheets_service, db_sheet_id):
 
 def render_delete_units_tab(drive_service, sheets_service, db_sheet_id):
     """Renders the UI for deleting units by batch or individually."""
+    st.subheader("Delete Allocated Units")
     st.error("⚠️ **Warning:** Deleting records is permanent and cannot be undone.")
     
-    st.subheader("Delete by Batch Upload")
+    st.markdown("<h5>Delete by Batch Upload</h5>", unsafe_allow_html=True)
     master_df = read_from_spreadsheet(sheets_service, db_sheet_id)
     
     required_cols = ['Financial Year', 'Uploaded Date', 'Office Order PDF Path']
@@ -253,7 +293,7 @@ def render_delete_units_tab(drive_service, sheets_service, db_sheet_id):
         st.info("No batches available for deletion.")
 
     st.markdown("---")
-    st.subheader("Delete by Single GSTIN")
+    st.markdown("<h5>Delete by Single GSTIN</h5>", unsafe_allow_html=True)
     with st.form("delete_gstin_form"):
         fy_options = []
         if master_df is not None and not master_df.empty and 'Financial Year' in master_df.columns:
@@ -306,7 +346,6 @@ def process_allocation_upload(drive_service, sheets_service, db_sheet_id, excel_
             return
 
         for index, row in df.iterrows():
-            # Validation logic remains the same
             gstin = str(row.get("GSTIN", "")).strip()
             if not validate_gstin(gstin):
                 errors.append(f"Row {index + 2}: Invalid GSTIN format for '{gstin}'.")
@@ -402,7 +441,6 @@ def audit_group_tracker_view(drive_service, sheets_service):
     st.markdown("<h2 class='page-main-title'>My Smart Audit Tracker</h2>", unsafe_allow_html=True)
     st.info("This section will show your assigned units, deadlines, and allow you to update the status of your audits.")
     
-    # Placeholder for Audit Group's view
     st.write("### My Assigned Units")
     st.dataframe({
         "GSTIN": ["27ABCDE1234F1Z5", "27BCDEF2345F2Z6"],
@@ -410,6 +448,7 @@ def audit_group_tracker_view(drive_service, sheets_service):
         "Allocation Date": ["2025-07-01", "2025-07-03"],
         "Status": ["Pending Acceptance", "In Progress"]
     }, use_container_width=True)
+
 
 
 # def process_allocation_upload(drive_service, sheets_service, db_sheet_id, excel_file, pdf_file, fin_year, alloc_date):
