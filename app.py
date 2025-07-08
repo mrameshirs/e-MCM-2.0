@@ -62,34 +62,51 @@ else:
             if st.session_state.drive_service and st.session_state.sheets_service:
                 st.session_state.drive_structure_initialized = False  # Trigger re-init of Drive structure
                 st.rerun()
-
     # Proceed only if Google services are available
     if st.session_state.drive_service and st.session_state.sheets_service:
-        # --- Activity Logging Logic ---
-        if not st.session_state.get('login_event_logged'):
-            if not st.session_state.get('master_drive_folder_id'):
-                master_id = find_drive_item_by_name(st.session_state.drive_service, MASTER_DRIVE_FOLDER_NAME, 'application/vnd.google-apps.folder')
-                if master_id:
-                    st.session_state.master_drive_folder_id = master_id
-            
-            master_folder_id = st.session_state.get('master_drive_folder_id')
-            if master_folder_id:
-                log_sheet_id = find_or_create_log_sheet(st.session_state.drive_service, st.session_state.sheets_service, master_folder_id)
-                if log_sheet_id and log_activity(st.session_state.sheets_service, log_sheet_id, st.session_state.username, st.session_state.role):
-                    st.session_state.login_event_logged = True
 
-        # --- Drive Structure Initialization ---
+        # --- Drive Structure and Log Initialization (Combined) ---
         if not st.session_state.get('drive_structure_initialized'):
-            with st.spinner(f"Initializing application folder structure on Google Drive ('{MASTER_DRIVE_FOLDER_NAME}')..."):
-                if initialize_drive_structure(st.session_state.drive_service):
+            with st.spinner(f"Verifying application structure in Google Drive..."):
+                if initialize_drive_structure(st.session_state.drive_service, st.session_state.sheets_service):
                     st.session_state.drive_structure_initialized = True
+                    # Log activity *after* structure is confirmed
+                    if not st.session_state.get('login_event_logged'):
+                        log_sheet_id = st.session_state.get('log_sheet_id')
+                        if log_sheet_id:
+                           log_activity(st.session_state.sheets_service, log_sheet_id, st.session_state.username, st.session_state.role)
+                           st.session_state.login_event_logged = True
                     st.rerun()
                 else:
-                    st.error(f"Failed to initialize Google Drive structure for '{MASTER_DRIVE_FOLDER_NAME}'. Application cannot proceed.")
-                    if st.button("Logout", key="fail_logout_drive_init"):
-                        st.session_state.logged_in = False
-                        st.rerun()
+                    st.error("Failed to initialize Google Drive structure. Application cannot proceed.")
                     st.stop()
+    # # Proceed only if Google services are available
+    # if st.session_state.drive_service and st.session_state.sheets_service:
+    #     # --- Activity Logging Logic ---
+    #     if not st.session_state.get('login_event_logged'):
+    #         if not st.session_state.get('master_drive_folder_id'):
+    #             master_id = find_drive_item_by_name(st.session_state.drive_service, MASTER_DRIVE_FOLDER_NAME, 'application/vnd.google-apps.folder')
+    #             if master_id:
+    #                 st.session_state.master_drive_folder_id = master_id
+            
+    #         master_folder_id = st.session_state.get('master_drive_folder_id')
+    #         if master_folder_id:
+    #             log_sheet_id = find_or_create_log_sheet(st.session_state.drive_service, st.session_state.sheets_service, master_folder_id)
+    #             if log_sheet_id and log_activity(st.session_state.sheets_service, log_sheet_id, st.session_state.username, st.session_state.role):
+    #                 st.session_state.login_event_logged = True
+
+    #     # --- Drive Structure Initialization ---
+    #     if not st.session_state.get('drive_structure_initialized'):
+    #         with st.spinner(f"Initializing application folder structure on Google Drive ('{MASTER_DRIVE_FOLDER_NAME}')..."):
+    #             if initialize_drive_structure(st.session_state.drive_service):
+    #                 st.session_state.drive_structure_initialized = True
+    #                 st.rerun()
+    #             else:
+    #                 st.error(f"Failed to initialize Google Drive structure for '{MASTER_DRIVE_FOLDER_NAME}'. Application cannot proceed.")
+    #                 if st.button("Logout", key="fail_logout_drive_init"):
+    #                     st.session_state.logged_in = False
+    #                     st.rerun()
+    #                 st.stop()
 
         # --- View Routing Logic based on App Mode and Role ---
         if st.session_state.get('drive_structure_initialized'):
