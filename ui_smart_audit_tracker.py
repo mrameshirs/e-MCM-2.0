@@ -1,4 +1,417 @@
-# ui_smart_audit_tracker.py
+# ui_smart_audit_tracker.py# ui_smart_audit_tracker.py
+import streamlit as st
+from streamlit_option_menu import option_menu
+import pandas as pd
+import re
+import datetime
+from io import BytesIO
+import time
+
+# Assuming google_utils.py and config.py are correctly set up
+from google_utils import (
+    read_from_spreadsheet,
+    find_or_create_spreadsheet,
+    update_spreadsheet_from_df,
+    upload_to_drive
+)
+from config import SMART_AUDIT_MASTER_DB_SHEET_NAME
+
+# --- Helper Functions ---
+
+def df_to_excel(df):
+    """Converts a DataFrame to an in-memory Excel file."""
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+    processed_data = output.getvalue()
+    return processed_data
+
+def generate_excel_template():
+    """Generates an in-memory Excel file template for download."""
+    template_df = pd.DataFrame({
+        "GSTIN": ["12ABCDE1234F5GH"],
+        "Trade Name": ["Sample Trade Name"],
+        "Category": ["Large"],
+        "Allocated Audit Group Number": [15],
+        "Allocated Circle": [7]
+    })
+    return df_to_excel(template_df)
+
+def validate_gstin(gstin):
+    """Validates the GSTIN format."""
+    if not gstin or not isinstance(gstin, str):
+        return False
+    pattern = r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}[A-Z0-9]{1}[A-Z0-9]{1}$"
+    return re.match(pattern, gstin) is not None
+
+def get_current_financial_year():
+    """Gets the current financial year based on the system date."""
+    now = datetime.datetime.now()
+    if now.month >= 4:
+        return f"{now.year}-{now.year + 1}"
+    else:
+        return f"{now.year - 1}-{now.year}"
+
+# --- Main Dashboard Function ---
+
+def smart_audit_tracker_dashboard(drive_service, sheets_service):
+    """
+    Displays the main dashboard for the Smart Audit Tracker module.
+    """
+    if st.button("⬅️ Back to e-MCM Dashboard", key="back_to_mcm_from_tracker"):
+        st.session_state.app_mode = "e-mcm"
+        st.rerun()
+
+    st.markdown("<h2 class='page-main-title'>Smart Audit Tracker</h2>", unsafe_allow_html=True)
+    st.markdown("<p class='page-app-subtitle'>Manage the complete lifecycle of audit assignments.</p>", unsafe_allow_html=True)
+
+    if 'master_db_sheet_id' not in st.session_state or not st.session_state.master_db_sheet_id:
+        with st.spinner("Initializing Smart Audit Master Database..."):
+            master_folder_id = st.session_state.get('master_drive_folder_id')
+            if master_folder_id:
+                sheet_id = find_or_create_spreadsheet(
+                    drive_service, sheets_service, SMART_AUDIT_MASTER_DB_SHEET_NAME, master_folder_id
+                )
+                st.session_state.master_db_sheet_id = sheet_id
+            else:
+                st.error("Master Drive Folder not found. Cannot initialize database.")
+                st.stop()
+    
+    master_db_sheet_id = st.session_state.get('master_db_sheet_id')
+
+    # --- New Tab-based Layout ---
+    st.markdown("<h3>Manage Unit Allocations</h3>", unsafe_allow_html=True)
+    
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📝 Allocate Units", 
+        "✏️ Edit/Reassign Units", 
+        "📄 View Assigned Units", 
+        "❌ Delete Units"
+    ])
+
+    with tab1:
+        render_allocate_units_tab(drive_service, sheets_service, master_db_sheet_id)
+    with tab2:
+        render_reassign_units_tab(drive_service, sheets_service, master_db_sheet_id)
+    with tab3:
+        render_view_assigned_units_tab(sheets_service, master_db_sheet_id)
+    with tab4:
+        render_delete_units_tab(drive_service, sheets_service, master_db_sheet_id)
+
+
+# --- Tab Rendering Functions ---
+
+def render_allocate_units_tab(drive_service, sheets_service, db_sheet_id):
+    """Renders the UI for allocating units."""
+    st.info("Upload an Excel sheet to allocate GSTIN units to audit groups and circles. Ensure the sheet follows the provided format.")
+    
+    st.download_button(
+        label="📥 Download Sample Excel",
+        data=generate_excel_template(),
+        file_name="allocation_template.xlsx",
+        mime="application/vnd.ms-excel"
+    )
+
+    with st.form("allocation_form", clear_on_submit=True):
+        current_fy = get_current_financial_year()
+        fy_options = [f"{y}-{y+1}" for y in range(2023, datetime.datetime.now().year + 2)]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            financial_year = st.selectbox("Financial Year", options=fy_options, index=fy_options.index(current_fy))
+            # Date is now mandatory, no default value
+            allocated_date = st.date_input("Office Order Allocation Date")
+        with col2:
+            uploaded_excel = st.file_uploader("Upload Excel Allocation File (.xlsx)", type=["xlsx"])
+            office_order_pdf = st.file_uploader("Upload Office Order PDF", type=["pdf"])
+
+        submitted = st.form_submit_button("Validate and Allocate Units", type="primary", use_container_width=True)
+
+    if submitted:
+        # Mandatory date check
+        if not allocated_date:
+            st.error("Please select the Office Order Allocation Date.")
+        elif not uploaded_excel:
+            st.error("Please upload the Excel allocation file.")
+        elif not office_order_pdf:
+            st.error("Please upload the office order PDF.")
+        else:
+            process_allocation_upload(drive_service, sheets_service, db_sheet_id, uploaded_excel, office_order_pdf, financial_year, allocated_date)
+
+def render_reassign_units_tab(drive_service, sheets_service, db_sheet_id):
+    """Renders the UI for editing and reassigning units."""
+    st.info("Search for a GSTIN to edit or reassign its audit group and circle. Ensure you upload the reallocation office order PDF.")
+
+    with st.form("search_gstin_form"):
+        current_fy = get_current_financial_year()
+        fy_options = [f"{y}-{y+1}" for y in range(2023, datetime.datetime.now().year + 2)]
+        
+        col1, col2 = st.columns([2,1])
+        with col1:
+            search_fy = st.selectbox("Financial Year", options=fy_options, index=fy_options.index(current_fy), key="reassign_fy")
+        with col2:
+            search_gstin = st.text_input("Enter GSTIN to Search")
+        
+        search_button = st.form_submit_button("Search GSTIN", use_container_width=True)
+
+    if search_button and search_gstin:
+        master_df = read_from_spreadsheet(sheets_service, db_sheet_id)
+        if master_df is not None and not master_df.empty and 'GSTIN' in master_df.columns:
+            result_df = master_df[(master_df['GSTIN'] == search_gstin.strip()) & (master_df['Financial Year'] == search_fy)]
+            if not result_df.empty:
+                st.session_state.found_gstin_details = result_df.iloc[0].to_dict()
+                st.session_state.show_reassign_form = True
+            else:
+                st.error(f"GSTIN '{search_gstin}' not found for Financial Year {search_fy}.")
+                st.session_state.show_reassign_form = False
+        else:
+            st.error("Master database is empty or could not be read.")
+            st.session_state.show_reassign_form = False
+
+    if st.session_state.get('show_reassign_form', False):
+        # Reassignment form logic (remains the same)
+        details = st.session_state.found_gstin_details
+        st.markdown("---")
+        st.write(f"**Editing Details for GSTIN:** `{details['GSTIN']}`")
+        
+        st.write(f"**Trade Name:** {details['Trade Name']} | **Category:** {details['Category']}")
+        st.write(f"**Current Group:** {details.get('Allocated Audit Group Number', 'N/A')} | **Current Circle:** {details['Allocated Circle']}")
+        
+        with st.form("reassignment_form"):
+            st.markdown("<h5>Enter New Allocation Details:</h5>", unsafe_allow_html=True)
+            col1, col2 = st.columns(2)
+            with col1:
+                new_group = st.number_input("New Allocated Audit Group Number", min_value=1, max_value=30, step=1, value=int(details.get('Allocated Audit Group Number', 1) or 1))
+            with col2:
+                new_circle = st.number_input("New Allocated Circle", min_value=1, max_value=10, step=1, value=int(details.get('Allocated Circle', 1) or 1))
+
+            realloc_date = st.date_input("Reallocation Office Order Date")
+            realloc_pdf = st.file_uploader("Upload Reallocation Office Order PDF", type=["pdf"])
+
+            reassign_submit = st.form_submit_button("Confirm Reassignment", type="primary", use_container_width=True)
+
+            if reassign_submit:
+                if not realloc_date:
+                    st.error("Please select the Reallocation Office Order Date.")
+                elif not realloc_pdf:
+                    st.error("Please upload the reallocation office order PDF.")
+                else:
+                    process_reassignment(drive_service, sheets_service, db_sheet_id, details, new_group, new_circle, realloc_date, realloc_pdf)
+
+def render_view_assigned_units_tab(sheets_service, db_sheet_id):
+    """Renders the UI for viewing and downloading assigned units."""
+    st.info("Select a financial year to view all assigned units. You can download the displayed data as an Excel file.")
+    
+    master_df = read_from_spreadsheet(sheets_service, db_sheet_id)
+    
+    if master_df is None or master_df.empty or 'Financial Year' not in master_df.columns:
+        st.warning("No allocation data found.")
+        return
+
+    fy_options = sorted(master_df['Financial Year'].unique().tolist())
+    selected_fy = st.selectbox("Select Financial Year to View", options=fy_options)
+
+    if selected_fy:
+        filtered_df = master_df[master_df['Financial Year'] == selected_fy]
+        st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+        
+        st.download_button(
+           label="📥 Download Data as Excel",
+           data=df_to_excel(filtered_df),
+           file_name=f"assigned_units_{selected_fy}.xlsx",
+           mime="application/vnd.ms-excel",
+           use_container_width=True
+        )
+
+def render_delete_units_tab(drive_service, sheets_service, db_sheet_id):
+    """Renders the UI for deleting units by batch or individually."""
+    st.error("⚠️ **Warning:** Deleting records is permanent and cannot be undone.")
+    
+    st.subheader("Delete by Batch Upload")
+    master_df = read_from_spreadsheet(sheets_service, db_sheet_id)
+    
+    required_cols = ['Financial Year', 'Uploaded Date', 'Office Order PDF Path']
+    if master_df is not None and not master_df.empty and all(col in master_df.columns for col in required_cols):
+        batches = master_df.groupby(required_cols).size().reset_index(name='Count')
+        batches['display'] = batches.apply(lambda row: f"{row['Uploaded Date']} - {row['Financial Year']} ({row['Count']} records)", axis=1)
+        
+        batch_to_delete = st.selectbox("Select a batch to delete:", options=batches['display'].tolist(), index=None, placeholder="Select a batch...")
+
+        if batch_to_delete:
+            selected_batch_info = batches[batches['display'] == batch_to_delete].iloc[0]
+            if st.button(f"Delete Batch from {selected_batch_info['Uploaded Date']}", type="primary"):
+                with st.spinner("Deleting batch..."):
+                    df_to_keep = master_df[master_df['Uploaded Date'] != selected_batch_info['Uploaded Date']]
+                    success = update_spreadsheet_from_df(sheets_service, db_sheet_id, df_to_keep)
+                    if success:
+                        st.success("Batch deleted successfully!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete the batch.")
+
+    else:
+        st.info("No batches available for deletion.")
+
+    st.markdown("---")
+    st.subheader("Delete by Single GSTIN")
+    with st.form("delete_gstin_form"):
+        fy_options = []
+        if master_df is not None and not master_df.empty and 'Financial Year' in master_df.columns:
+            fy_options = sorted(master_df['Financial Year'].unique().tolist())
+
+        col1, col2 = st.columns([2,1])
+        with col1:
+            del_fy = st.selectbox("Financial Year", options=fy_options, key="del_fy")
+        with col2:
+            del_gstin = st.text_input("Enter GSTIN to Delete")
+        
+        delete_search_button = st.form_submit_button("Search and Delete GSTIN", use_container_width=True)
+
+        if delete_search_button and del_gstin and del_fy:
+            with st.spinner(f"Searching for {del_gstin}...") :
+                record_to_delete = master_df[(master_df['GSTIN'] == del_gstin.strip()) & (master_df['Financial Year'] == del_fy)]
+                if not record_to_delete.empty:
+                    df_to_keep = master_df.drop(record_to_delete.index)
+                    success = update_spreadsheet_from_df(sheets_service, db_sheet_id, df_to_keep)
+                    if success:
+                        st.success(f"GSTIN '{del_gstin}' deleted successfully for FY {del_fy}.")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete the GSTIN record.")
+                else:
+                    st.error(f"GSTIN '{del_gstin}' not found for Financial Year {del_fy}.")
+
+# --- Processing Functions ---
+
+def process_allocation_upload(drive_service, sheets_service, db_sheet_id, excel_file, pdf_file, fin_year, alloc_date):
+    """Validates and processes the uploaded allocation files."""
+    with st.spinner("Processing file... This may take a moment."):
+        try:
+            df = pd.read_excel(excel_file)
+            master_df = read_from_spreadsheet(sheets_service, db_sheet_id)
+            if master_df is None: master_df = pd.DataFrame()
+        except Exception as e:
+            st.error(f"Error reading Excel file: {e}")
+            return
+
+        required_cols_for_check = ['GSTIN', 'Financial Year']
+        can_check_duplicates = not master_df.empty and all(col in master_df.columns for col in required_cols_for_check)
+        
+        errors, valid_rows = [], []
+        required_cols = ["GSTIN", "Trade Name", "Category", "Allocated Circle"]
+        
+        if not all(col in df.columns for col in required_cols):
+            st.error(f"Excel file is missing one of the required columns: {required_cols}")
+            return
+
+        for index, row in df.iterrows():
+            # Validation logic remains the same
+            gstin = str(row.get("GSTIN", "")).strip()
+            if not validate_gstin(gstin):
+                errors.append(f"Row {index + 2}: Invalid GSTIN format for '{gstin}'.")
+                continue
+            
+            if can_check_duplicates and gstin in master_df[master_df['Financial Year'] == fin_year]['GSTIN'].values:
+                errors.append(f"Row {index + 2}: GSTIN '{gstin}' already exists for {fin_year}. Use the Reassign option.")
+                continue
+            
+            valid_rows.append(row)
+
+        if errors:
+            st.error("Validation failed. Please correct the errors below and re-upload:")
+            for error in errors: st.write(error)
+            return
+        
+        st.info("Validation successful. Uploading office order and saving data...")
+        master_folder_id = st.session_state.get('master_drive_folder_id')
+        pdf_filename = f"OfficeOrder_{fin_year.replace('-', '_')}_{int(time.time())}.pdf"
+        pdf_id, pdf_url = upload_to_drive(drive_service, pdf_file.getvalue(), master_folder_id, pdf_filename)
+
+        if not pdf_url:
+            st.error("Failed to upload Office Order PDF. Aborting data save.")
+            return
+
+        new_data_df = pd.DataFrame(valid_rows)
+        new_data_df['Financial Year'] = fin_year
+        new_data_df['Allocated Date'] = alloc_date.strftime("%Y-%m-%d")
+        new_data_df['Uploaded Date'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new_data_df['Office Order PDF Path'] = pdf_url
+        new_data_df['Reassigned Flag'] = False
+        new_data_df['Old Group Number'] = None
+        new_data_df['Old Circle Number'] = None
+
+        final_df = pd.concat([master_df, new_data_df], ignore_index=True)
+        success = update_spreadsheet_from_df(sheets_service, db_sheet_id, final_df)
+
+        if success:
+            st.success("Excel data validated and saved successfully!")
+            st.balloons()
+        else:
+            st.error("Failed to save data to the master database.")
+
+def process_reassignment(drive_service, sheets_service, db_sheet_id, old_details, new_group, new_circle, realloc_date, realloc_pdf):
+    """Processes the reassignment submission."""
+    with st.spinner("Processing reassignment..."):
+        master_df = read_from_spreadsheet(sheets_service, db_sheet_id)
+        if master_df is None:
+            st.error("Could not read master database. Aborting.")
+            return
+
+        idx = master_df[(master_df['GSTIN'] == old_details['GSTIN']) & (master_df['Financial Year'] == old_details['Financial Year'])].index
+        if idx.empty:
+            st.error("Could not find the original record to update.")
+            return
+        
+        record_index = idx[0]
+        master_folder_id = st.session_state.get('master_drive_folder_id')
+        pdf_filename = f"ReallocOrder_{old_details['Financial Year'].replace('-', '_')}_{old_details['GSTIN']}_{int(time.time())}.pdf"
+        pdf_id, pdf_url = upload_to_drive(drive_service, realloc_pdf.getvalue(), master_folder_id, pdf_filename)
+
+        if not pdf_url:
+            st.error("Failed to upload Reallocation Office Order PDF. Aborting update.")
+            return
+
+        master_df.loc[record_index, 'Reassigned Flag'] = True
+        master_df.loc[record_index, 'Old Group Number'] = old_details.get('Allocated Audit Group Number')
+        master_df.loc[record_index, 'Old Circle Number'] = old_details.get('Allocated Circle')
+        master_df.loc[record_index, 'Allocated Audit Group Number'] = new_group
+        master_df.loc[record_index, 'Allocated Circle'] = new_circle
+        master_df.loc[record_index, 'Allocated Date'] = realloc_date.strftime("%Y-%m-%d")
+        master_df.loc[record_index, 'Office Order PDF Path'] = pdf_url
+
+        success = update_spreadsheet_from_df(sheets_service, db_sheet_id, master_df)
+
+        if success:
+            st.success(f"GSTIN '{old_details['GSTIN']}' reassigned successfully!")
+            st.session_state.show_reassign_form = False
+            st.balloons()
+            time.sleep(1)
+            st.rerun()
+        else:
+            st.error("Failed to save the updated record to the master database.")
+
+def audit_group_tracker_view(drive_service, sheets_service):
+    """
+    Displays the Smart Audit Tracker view for an Audit Group user.
+    """
+    if st.button("⬅️ Back to e-MCM Dashboard", key="back_to_mcm_from_ag_tracker"):
+        st.session_state.app_mode = "e-mcm"
+        st.rerun()
+
+    st.markdown("<h2 class='page-main-title'>My Smart Audit Tracker</h2>", unsafe_allow_html=True)
+    st.info("This section will show your assigned units, deadlines, and allow you to update the status of your audits.")
+    
+    # Placeholder for Audit Group's view
+    st.write("### My Assigned Units")
+    st.dataframe({
+        "GSTIN": ["27ABCDE1234F1Z5", "27BCDEF2345F2Z6"],
+        "Trade Name": ["ABC Enterprises", "XYZ Corporation"],
+        "Allocation Date": ["2025-07-01", "2025-07-03"],
+        "Status": ["Pending Acceptance", "In Progress"]
+    }, use_container_width=True)
+
 import streamlit as st
 from streamlit_option_menu import option_menu
 import pandas as pd
@@ -952,87 +1365,3 @@ def audit_group_tracker_view(drive_service, sheets_service):
 #         "Allocation Date": ["2025-07-01", "2025-07-03"],
 #         "Status": ["Pending Acceptance", "In Progress"]
 #     }, use_container_width=True)
-# # # ui_smart_audit_tracker.py
-# # import streamlit as st
-# # from streamlit_option_menu import option_menu
-
-# # def smart_audit_tracker_dashboard(drive_service, sheets_service):
-# #     """
-# #     Displays the main dashboard for the Smart Audit Tracker module.
-# #     This view is primarily for the Planning & Coordination Officer.
-# #     """
-# #     # --- Back Button ---
-# #     if st.button("⬅️ Back to e-MCM Dashboard", key="back_to_mcm_from_tracker"):
-# #         st.session_state.app_mode = "e-mcm"
-# #         st.rerun()
-
-# #     st.markdown("<h2 class='page-main-title'>Smart Audit Tracker</h2>", unsafe_allow_html=True)
-# #     st.markdown("<p class='page-app-subtitle'>Manage the complete lifecycle of audit assignments.</p>", unsafe_allow_html=True)
-
-# #     selected_tab = option_menu(
-# #         menu_title=None,
-# #         options=["Allocate Units to Audit Group", "Re-assign/Edit Allocation", "See Audit Lifecycle", "Commissioner Dashboard"],
-# #         icons=["person-plus-fill", "pencil-square", "diagram-3-fill", "person-video3"],
-# #         menu_icon="cast",
-# #         default_index=0,
-# #         orientation="horizontal",
-# #         styles={
-# #             "container": {"padding": "5px !important", "background-color": "#f0f2f6"},
-# #             "icon": {"color": "#dc3545", "font-size": "20px"},
-# #             "nav-link": {"font-size": "16px", "text-align": "center", "margin": "0px", "--hover-color": "#f8d7da"},
-# #             "nav-link-selected": {"background-color": "#dc3545", "color": "white"},
-# #         }
-# #     )
-
-# #     st.markdown("<div class='card'>", unsafe_allow_html=True)
-# #     if selected_tab == "Allocate Units to Audit Group":
-# #         st.header("Allocate New Units for Audit")
-# #         st.info("This section will contain the interface to assign new taxpayers/units to specific audit groups for upcoming audit cycles.")
-# #         # Placeholder for allocation UI
-# #         st.selectbox("Select Audit Group", options=[f"Group {i}" for i in range(1, 31)])
-# #         st.text_input("Enter GSTIN of unit to allocate")
-# #         st.date_input("Allocation Date")
-# #         st.button("Allocate Unit", type="primary")
-
-# #     elif selected_tab == "Re-assign/Edit Allocation":
-# #         st.header("Manage Existing Allocations")
-# #         st.info("This section will allow for viewing, editing, or re-assigning units that have already been allocated.")
-# #         # Placeholder for management UI
-# #         st.text_input("Search by GSTIN or Audit Group to find allocation")
-# #         st.button("Search")
-
-# #     elif selected_tab == "See Audit Lifecycle":
-# #         st.header("Track Audit Progress Lifecycle")
-# #         st.info("This section will provide a comprehensive view of the audit status for each allocated unit, from assignment to completion.")
-# #         # Placeholder for lifecycle tracking UI
-# #         st.selectbox("Select Audit Group to view lifecycle", options=[f"Group {i}" for i in range(1, 31)])
-
-# #     elif selected_tab == "Commissioner Dashboard":
-# #         st.header("Commissioner's Dashboard")
-# #         st.info("This section will display high-level summaries, statistics, and visualizations for executive oversight.")
-# #         # Placeholder for high-level dashboard
-# #         st.metric("Total Units Under Audit", "150")
-# #         st.metric("Audits Completed This Month", "25")
-# #         st.metric("Revenue Detected (MTD)", "₹1.2 Cr")
-
-# #     st.markdown("</div>", unsafe_allow_html=True)
-
-
-# # def audit_group_tracker_view(drive_service, sheets_service):
-# #     """
-# #     Displays the Smart Audit Tracker view for an Audit Group user.
-# #     """
-# #     if st.button("⬅️ Back to e-MCM Dashboard", key="back_to_mcm_from_ag_tracker"):
-# #         st.session_state.app_mode = "e-mcm"
-# #         st.rerun()
-
-# #     st.markdown("<h2 class='page-main-title'>My Smart Audit Tracker</h2>", unsafe_allow_html=True)
-# #     st.info("This section will show your assigned units, deadlines, and allow you to update the status of your audits.")
-# #     # Placeholder for Audit Group's view
-# #     st.write("### My Assigned Units")
-# #     st.dataframe({
-# #         "GSTIN": ["27ABCDE1234F1Z5", "27BCDEF2345F2Z6"],
-# #         "Trade Name": ["ABC Enterprises", "XYZ Corporation"],
-# #         "Allocation Date": ["2025-07-01", "2025-07-03"],
-# #         "Status": ["Pending Acceptance", "In Progress"]
-# #     }, use_container_width=True)
