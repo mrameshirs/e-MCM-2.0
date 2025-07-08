@@ -118,7 +118,7 @@ def initialize_drive_structure(drive_service):
 
     # 2. Find or Create the Log Sheet inside the Master Folder
     if not st.session_state.get('log_sheet_id'):
-        log_sheet_id = find_or_create_spreadsheet(drive_service, st.session_state.sheets_service, LOG_SHEET_FILENAME_ON_DRIVE, st.session_state.master_drive_folder_id)
+        log_sheet_id = find_or_create_log_sheet(drive_service, st.session_state.sheets_service, st.session_state.master_drive_folder_id)
         if not log_sheet_id:
             st.error("Failed to create the application log sheet. Logging will be disabled.")
         st.session_state.log_sheet_id = log_sheet_id
@@ -188,6 +188,61 @@ def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=No
         st.error(f"An unexpected error occurred creating Spreadsheet: {e}")
         return None, None
 
+def find_or_create_log_sheet(drive_service, sheets_service, parent_folder_id):
+    """Finds the log sheet or creates it if it doesn't exist."""
+    log_sheet_name = LOG_SHEET_FILENAME_ON_DRIVE
+    log_sheet_id = find_drive_item_by_name(drive_service, log_sheet_name,
+                                           mime_type='application/vnd.google-apps.spreadsheet',
+                                           parent_id=parent_folder_id)
+    if log_sheet_id:
+        return log_sheet_id
+    
+    st.info(f"Log sheet '{log_sheet_name}' not found. Creating it...")
+    spreadsheet_id, _ = create_spreadsheet(sheets_service, drive_service, log_sheet_name, parent_folder_id=parent_folder_id)
+    
+    if spreadsheet_id:
+        header = [['Timestamp', 'Username', 'Role']]
+        body = {'values': header}
+        try:
+            sheets_service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id, range='Sheet1!A1',
+                valueInputOption='USER_ENTERED', body=body
+            ).execute()
+            st.success(f"Log sheet '{log_sheet_name}' created successfully.")
+        except HttpError as error:
+            st.error(f"Failed to write header to new log sheet: {error}")
+            return None
+        return spreadsheet_id
+    else:
+        st.error(f"Fatal: Failed to create log sheet '{log_sheet_name}'. Logging will be disabled.")
+        return None
+
+def log_activity(sheets_service, log_sheet_id, username, role):
+    """Appends a login activity record to the specified log sheet."""
+    if not log_sheet_id:
+        st.warning("Log Sheet ID is not available. Skipping activity logging.")
+        return False
+    
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        values = [[timestamp, username, role]]
+        body = {'values': values}
+        
+        sheets_service.spreadsheets().values().append(
+            spreadsheetId=log_sheet_id,
+            range='Sheet1!A1',
+            valueInputOption='USER_ENTERED',
+            insertDataOption='INSERT_ROWS',
+            body=body
+        ).execute()
+        return True
+    except HttpError as error:
+        st.error(f"An error occurred while logging activity: {error}")
+        return False
+    except Exception as e:
+        st.error(f"An unexpected error occurred during logging: {e}")
+        return False
+
 def find_or_create_spreadsheet(drive_service, sheets_service, sheet_name, parent_folder_id):
     """Finds a spreadsheet by name or creates it with a header if it doesn't exist."""
     sheet_id = find_drive_item_by_name(drive_service, sheet_name,
@@ -225,32 +280,6 @@ def find_or_create_spreadsheet(drive_service, sheets_service, sheet_name, parent
     else:
         st.error(f"Fatal: Failed to create spreadsheet '{sheet_name}'.")
         return None
-
-def log_activity(sheets_service, log_sheet_id, username, role):
-    """Appends a login activity record to the specified log sheet."""
-    if not log_sheet_id:
-        st.warning("Log Sheet ID is not available. Skipping activity logging.")
-        return False
-    
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        values = [[timestamp, username, role]]
-        body = {'values': values}
-        
-        sheets_service.spreadsheets().values().append(
-            spreadsheetId=log_sheet_id,
-            range='Sheet1!A1',
-            valueInputOption='USER_ENTERED',
-            insertDataOption='INSERT_ROWS',
-            body=body
-        ).execute()
-        return True
-    except HttpError as error:
-        st.error(f"An error occurred while logging activity: {error}")
-        return False
-    except Exception as e:
-        st.error(f"An unexpected error occurred during logging: {e}")
-        return False
 
 def read_from_spreadsheet(sheets_service, spreadsheet_id, sheet_name="Sheet1"):
     """Reads an entire sheet into a pandas DataFrame, handling varying column counts."""
@@ -417,6 +446,7 @@ def append_to_spreadsheet(sheets_service, spreadsheet_id, values_to_append):
     except Exception as e:
         st.error(f"Unexpected error appending to Spreadsheet: {e}")
         return None
+
 # # google_utils.py
 # from datetime import datetime 
 # import streamlit as st
