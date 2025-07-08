@@ -21,7 +21,7 @@ def test_root_spreadsheet_creation(sheets_service, drive_service):
     st.subheader("🧪 Test Spreadsheet Creation in Root")
     
     if st.button("Test Create in Root Drive"):
-        test_title = f"TEST_ROOT_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        test_title = f"TEST_ROOT_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
         with st.spinner("Testing..."):
             try:
