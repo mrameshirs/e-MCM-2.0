@@ -257,6 +257,360 @@ def upload_to_drive(drive_service, file_content_or_path, folder_id, filename_on_
         st.error(f"An unexpected error in upload_to_drive: {e}")
         return None, None
 
+def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=None):
+    """Creates a spreadsheet in root Drive first, then optionally moves it."""
+    try:
+        # Step 1: Create spreadsheet in root Drive (no parent specified)
+        # This should work since your service account can create spreadsheets
+        spreadsheet_body = {'properties': {'title': title}}
+        spreadsheet = sheets_service.spreadsheets().create(
+            body=spreadsheet_body,
+            fields='spreadsheetId,spreadsheetUrl'
+        ).execute()
+        
+        spreadsheet_id = spreadsheet.get('spreadsheetId')
+        spreadsheet_url = spreadsheet.get('spreadsheetUrl')
+        
+        if not spreadsheet_id:
+            raise Exception("No spreadsheet ID returned")
+        
+        st.success(f"✅ Spreadsheet '{title}' created successfully in root Drive")
+        
+        # Step 2: Try to move to target folder (optional - don't fail if this doesn't work)
+        if parent_folder_id and drive_service:
+            try:
+                # Get current parents (should be root)
+                file = drive_service.files().get(fileId=spreadsheet_id, fields='parents').execute()
+                previous_parents = ",".join(file.get('parents', []))
+                
+                # Try to move to target folder
+                drive_service.files().update(
+                    fileId=spreadsheet_id,
+                    addParents=parent_folder_id,
+                    removeParents=previous_parents,
+                    fields='id, parents'
+                ).execute()
+                st.success(f"✅ Spreadsheet moved to target folder")
+                
+            except HttpError as move_error:
+                # Moving failed, but spreadsheet was created successfully
+                st.warning(f"⚠️ Spreadsheet created in root Drive (couldn't move to folder)")
+                st.info("The spreadsheet is accessible and functional. You can manually move it if needed.")
+                st.info(f"📄 Spreadsheet link: {spreadsheet_url}")
+                # Don't fail - the spreadsheet exists and works
+                
+            except Exception as move_error:
+                st.warning(f"⚠️ Spreadsheet created but move failed: {move_error}")
+                st.info(f"📄 Spreadsheet link: {spreadsheet_url}")
+        
+        return spreadsheet_id, spreadsheet_url
+        
+    except HttpError as error:
+        if error.resp.status == 403:
+            st.error("❌ Permission denied creating spreadsheet")
+            st.error("The service account doesn't have permission to create Google Sheets")
+            # Show the service account email for sharing
+            st.info("💡 **Solution:** Share your Google Drive with this service account:")
+            st.code("nlp-101@supreme-court-hackathoin.iam.gserviceaccount.com")
+        else:
+            st.error(f"HTTP Error creating spreadsheet: {error}")
+        return None, None
+        
+    except Exception as e:
+        st.error(f"Unexpected error creating spreadsheet: {e}")
+        return None, None
+
+def find_or_create_log_sheet(drive_service, sheets_service, parent_folder_id):
+    """Finds the log sheet or creates it if it doesn't exist."""
+    log_sheet_name = LOG_SHEET_FILENAME_ON_DRIVE
+    log_sheet_id = find_drive_item_by_name(drive_service, log_sheet_name,
+                                           mime_type='application/vnd.google-apps.spreadsheet',
+                                           parent_id=parent_folder_id)
+    if log_sheet_id:
+        return log_sheet_id
+    
+    st.info(f"Log sheet '{log_sheet_name}' not found. Creating it...")
+    spreadsheet_id, _ = create_spreadsheet(sheets_service, drive_service, log_sheet_name, parent_folder_id=parent_folder_id)
+    
+    if spreadsheet_id:
+        header = [['Timestamp', 'Username', 'Role']]
+        body = {'values': header}
+        try:
+            sheets_service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id, range='Sheet1!A1',
+                valueInputOption='USER_ENTERED', body=body
+            ).execute()
+            st.success(f"Log sheet '{log_sheet_name}' created successfully.")
+        except HttpError as error:
+            st.error(f"Failed to write header to new log sheet: {error}")
+            return None
+        return spreadsheet_id
+    else:
+        st.error(f"Fatal: Failed to create log sheet '{log_sheet_name}'. Logging will be disabled.")
+        return None
+
+def log_activity(sheets_service, log_sheet_id, username, role):
+    """Appends a login activity record to the specified log sheet."""
+    if not log_sheet_id:
+        st.warning("Log Sheet ID is not available. Skipping activity logging.")
+        return False
+    
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        values = [[timestamp, username, role]]
+        body = {'values': values}
+        
+        sheets_service.spreadsheets().values().append(
+            spreadsheetId=log_sheet_id,
+            range='Sheet1!A1',
+            valueInputOption='USER_ENTERED',
+            insertDataOption='INSERT_ROWS',
+            body=body
+        ).execute()
+        return True
+    except HttpError as error:
+        st.error(f"An error occurred while logging activity: {error}")
+        return False
+    except Exception as e:
+        st.error(f"An unexpected error occurred during logging: {e}")
+        return False
+
+def find_or_create_spreadsheet(drive_service, sheets_service, sheet_name, parent_folder_id):
+    """Finds a spreadsheet by name or creates it with a header if it doesn't exist."""
+    sheet_id = find_drive_item_by_name(drive_service, sheet_name,
+                                       mime_type='application/vnd.google-apps.spreadsheet',
+                                       parent_id=parent_folder_id)
+    if sheet_id:
+        return sheet_id
+
+    st.info(f"Spreadsheet '{sheet_name}' not found. Creating it...")
+    sheet_id, _ = create_spreadsheet(sheets_service, drive_service, sheet_name, parent_folder_id=parent_folder_id)
+    
+    if sheet_id:
+        header = []
+        if sheet_name == SMART_AUDIT_MASTER_DB_SHEET_NAME:
+            header = [[
+                "GSTIN", "Trade Name", "Category", "Allocated Audit Group Number", 
+                "Allocated Circle", "Financial Year", "Allocated Date", "Uploaded Date", 
+                "Office Order PDF Path", "Reassigned Flag", "Old Group Number", "Old Circle Number"
+            ]]
+        elif sheet_name == LOG_SHEET_FILENAME_ON_DRIVE:
+             header = [['Timestamp', 'Username', 'Role']]
+        
+        if header:
+            body = {'values': header}
+            try:
+                sheets_service.spreadsheets().values().append(
+                    spreadsheetId=sheet_id, range='Sheet1!A1',
+                    valueInputOption='USER_ENTERED', body=body
+                ).execute()
+                st.success(f"Spreadsheet '{sheet_name}' created successfully with headers.")
+            except HttpError as error:
+                st.error(f"Failed to write header to new spreadsheet: {error}")
+                return None
+        return sheet_id
+    else:
+        st.error(f"Fatal: Failed to create spreadsheet '{sheet_name}'.")
+        return None
+
+def read_from_spreadsheet(sheets_service, spreadsheet_id, sheet_name="Sheet1"):
+    """Reads an entire sheet into a pandas DataFrame, handling varying column counts."""
+    try:
+        result = sheets_service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=sheet_name
+        ).execute()
+        values = result.get('values', [])
+
+        if not values:
+            return pd.DataFrame()
+
+        header = values[0]
+        data = values[1:]
+        
+        if not data:
+            return pd.DataFrame(columns=header)
+
+        num_cols = len(header)
+        processed_data = []
+        for row in data:
+            new_row = list(row)
+            if len(new_row) < num_cols:
+                new_row.extend([None] * (num_cols - len(new_row)))
+            elif len(new_row) > num_cols:
+                new_row = new_row[:num_cols]
+            processed_data.append(new_row)
+
+        df = pd.DataFrame(processed_data, columns=header)
+        return df
+
+    except HttpError as error:
+        st.error(f"An API error occurred reading from Spreadsheet: {error}")
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"An unexpected error occurred while reading the Spreadsheet: {e}")
+        return pd.DataFrame()
+
+def update_spreadsheet_from_df(sheets_service, spreadsheet_id, df_to_write):
+    """Clears a sheet and updates it with data from a pandas DataFrame."""
+    try:
+        sheet_metadata = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        first_sheet_title = sheet_metadata['sheets'][0]['properties']['title']
+
+        sheets_service.spreadsheets().values().clear(
+            spreadsheetId=spreadsheet_id,
+            range=first_sheet_title
+        ).execute()
+
+        df_prepared = df_to_write.fillna('')
+        values_to_write = [df_prepared.columns.values.tolist()] + df_prepared.values.tolist()
+
+        body = {'values': values_to_write}
+        sheets_service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=f"{first_sheet_title}!A1",
+            valueInputOption='USER_ENTERED',
+            body=body
+        ).execute()
+        
+        return True
+
+    except HttpError as error:
+        st.error(f"An API error occurred while updating the Spreadsheet: {error}")
+        return False
+    except Exception as e:
+        st.error(f"An unexpected error occurred while updating the Spreadsheet: {e}")
+        return False
+
+def load_mcm_periods(drive_service):
+    """Loads the MCM periods configuration file from Google Drive."""
+    mcm_periods_file_id = st.session_state.get('mcm_periods_drive_file_id')
+    if not mcm_periods_file_id:
+        if st.session_state.get('master_drive_folder_id'):
+            mcm_periods_file_id = find_drive_item_by_name(drive_service, MCM_PERIODS_FILENAME_ON_DRIVE,
+                                                          parent_id=st.session_state.master_drive_folder_id)
+            st.session_state.mcm_periods_drive_file_id = mcm_periods_file_id
+        else:
+            return {}
+
+    if mcm_periods_file_id:
+        try:
+            request = drive_service.files().get_media(fileId=mcm_periods_file_id)
+            fh = BytesIO()
+            downloader = MediaIoBaseDownload(fh, request)
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+            fh.seek(0)
+            return json.load(fh)
+        except HttpError as error:
+            if error.resp.status == 404:
+                st.session_state.mcm_periods_drive_file_id = None
+            else:
+                st.error(f"Error loading '{MCM_PERIODS_FILENAME_ON_DRIVE}' from Drive: {error}")
+            return {}
+        except json.JSONDecodeError:
+            st.error(f"Error decoding JSON from '{MCM_PERIODS_FILENAME_ON_DRIVE}'. File might be corrupted.")
+            return {}
+        except Exception as e:
+            st.error(f"Unexpected error loading '{MCM_PERIODS_FILENAME_ON_DRIVE}': {e}")
+            return {}
+    return {}
+
+def save_mcm_periods(drive_service, periods_data):
+    """Saves the MCM periods configuration file to Google Drive."""
+    master_folder_id = st.session_state.get('master_drive_folder_id')
+    if not master_folder_id:
+        st.error("Master Drive folder ID not set. Cannot save MCM periods configuration.")
+        return False
+
+    mcm_periods_file_id = st.session_state.get('mcm_periods_drive_file_id')
+    file_content = json.dumps(periods_data, indent=4).encode('utf-8')
+    fh = BytesIO(file_content)
+    media_body = MediaIoBaseUpload(fh, mimetype='application/json', resumable=True)
+
+    try:
+        if mcm_periods_file_id:
+            file_metadata_update = {'name': MCM_PERIODS_FILENAME_ON_DRIVE}
+            drive_service.files().update(
+                fileId=mcm_periods_file_id,
+                body=file_metadata_update,
+                media_body=media_body,
+                fields='id, name'
+            ).execute()
+        else:
+            file_metadata_create = {'name': MCM_PERIODS_FILENAME_ON_DRIVE, 'parents': [master_folder_id]}
+            new_file = drive_service.files().create(
+                body=file_metadata_create,
+                media_body=media_body,
+                fields='id, name'
+            ).execute()
+            st.session_state.mcm_periods_drive_file_id = new_file.get('id')
+        return True
+    except HttpError as error:
+        st.error(f"Error saving '{MCM_PERIODS_FILENAME_ON_DRIVE}' to Drive: {error}")
+        return False
+    except Exception as e:
+        st.error(f"Unexpected error saving '{MCM_PERIODS_FILENAME_ON_DRIVE}': {e}")
+        return False
+
+def append_to_spreadsheet(sheets_service, spreadsheet_id, values_to_append):
+    """Appends rows to a spreadsheet."""
+    try:
+        body = {'values': values_to_append}
+        sheet_metadata = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        sheets = sheet_metadata.get('sheets', '')
+        first_sheet_title = sheets[0].get("properties", {}).get("title", "Sheet1")
+
+        append_result = sheets_service.spreadsheets().values().append(
+            spreadsheetId=spreadsheet_id,
+            range=f"{first_sheet_title}!A1",
+            valueInputOption='USER_ENTERED',
+            insertDataOption='INSERT_ROWS',
+            body=body
+        ).execute()
+        return append_result
+    except HttpError as error:
+        st.error(f"An error occurred appending to Spreadsheet: {error}")
+        return None
+    except Exception as e:
+        st.error(f"Unexpected error appending to Spreadsheet: {e}")
+        return None
+
+def delete_spreadsheet_rows(sheets_service, spreadsheet_id, sheet_id_gid, row_indices_to_delete):
+    """Deletes specific rows from a sheet."""
+    if not row_indices_to_delete:
+        return True
+    requests = []
+    # Sort in descending order to avoid index shifting issues during deletion
+    for data_row_index in sorted(row_indices_to_delete, reverse=True):
+        # The API uses 0-based index. If data starts at row 2 (index 1) after the header,
+        # the sheet row index for the API is data_row_index + 1.
+        sheet_row_start_index = data_row_index + 1
+        requests.append({
+            "deleteDimension": {
+                "range": {
+                    "sheetId": sheet_id_gid,
+                    "dimension": "ROWS",
+                    "startIndex": sheet_row_start_index,
+                    "endIndex": sheet_row_start_index + 1
+                }
+            }
+        })
+    if requests:
+        try:
+            body = {'requests': requests}
+            sheets_service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id, body=body).execute()
+            return True
+        except HttpError as error:
+            st.error(f"An error occurred deleting rows from Spreadsheet: {error}")
+            return False
+        except Exception as e:
+            st.error(f"Unexpected error deleting rows: {e}")
+            return False
+    return True
+
 # def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=None):
 #     """Creates a spreadsheet and moves it to a specific folder with better error handling."""
 #     try:
