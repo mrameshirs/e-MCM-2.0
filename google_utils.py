@@ -257,10 +257,79 @@ def upload_to_drive(drive_service, file_content_or_path, folder_id, filename_on_
         st.error(f"An unexpected error in upload_to_drive: {e}")
         return None, None
 
+# def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=None):
+#     """Creates a spreadsheet and moves it to a specific folder with better error handling."""
+#     try:
+#         # Step 1: Create spreadsheet in root first (this usually works)
+#         spreadsheet_body = {'properties': {'title': title}}
+#         spreadsheet = sheets_service.spreadsheets().create(
+#             body=spreadsheet_body,
+#             fields='spreadsheetId,spreadsheetUrl'
+#         ).execute()
+#         spreadsheet_id = spreadsheet.get('spreadsheetId')
+        
+#         if not spreadsheet_id:
+#             st.error("Failed to create spreadsheet - no ID returned")
+#             return None, None
+
+#         # Step 2: Try to move to target folder if specified
+#         if spreadsheet_id and drive_service and parent_folder_id:
+#             try:
+#                 # Get current parents
+#                 file = drive_service.files().get(fileId=spreadsheet_id, fields='parents').execute()
+#                 previous_parents = ",".join(file.get('parents', []))
+                
+#                 # Move to target folder
+#                 drive_service.files().update(
+#                     fileId=spreadsheet_id,
+#                     addParents=parent_folder_id,
+#                     removeParents=previous_parents,
+#                     fields='id, parents'
+#                 ).execute()
+#                 st.success(f"✅ Spreadsheet '{title}' created and moved to target folder")
+                
+#             except HttpError as move_error:
+#                 st.warning(f"⚠️ Spreadsheet created but couldn't move to folder: {move_error}")
+#                 st.info("The spreadsheet was created in your root Drive. You can manually move it if needed.")
+#                 # Don't fail completely - return the spreadsheet ID anyway
+                
+#         return spreadsheet_id, spreadsheet.get('spreadsheetUrl')
+        
+#     except HttpError as error:
+#         if error.resp.status == 403:
+#             st.error("❌ Permission denied. Please check service account permissions:")
+#             st.error("1. Service account needs 'Editor' access to your Google Drive")
+#             st.error("2. Service account needs Google Sheets API enabled")
+#             st.error("3. Try sharing your parent folder with the service account email")
+#         else:
+#             st.error(f"HTTP Error creating Spreadsheet: {error}")
+#         return None, None
+#     except Exception as e:
+#         st.error(f"Unexpected error creating Spreadsheet: {e}")
+#         return None, None
+
 def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=None):
-    """Creates a spreadsheet and moves it to a specific folder with better error handling."""
+    """Creates a spreadsheet with fallback options for permission issues."""
     try:
-        # Step 1: Create spreadsheet in root first (this usually works)
+        # Method 1: Try creating directly in target folder
+        if parent_folder_id:
+            try:
+                spreadsheet_body = {
+                    'properties': {'title': title},
+                    'parents': [parent_folder_id]  # Try direct placement
+                }
+                spreadsheet = sheets_service.spreadsheets().create(
+                    body=spreadsheet_body,
+                    fields='spreadsheetId,spreadsheetUrl'
+                ).execute()
+                spreadsheet_id = spreadsheet.get('spreadsheetId')
+                if spreadsheet_id:
+                    st.success(f"✅ Spreadsheet '{title}' created directly in target folder")
+                    return spreadsheet_id, spreadsheet.get('spreadsheetUrl')
+            except:
+                st.info("Direct folder creation failed, trying alternative method...")
+        
+        # Method 2: Create in root, then move
         spreadsheet_body = {'properties': {'title': title}}
         spreadsheet = sheets_service.spreadsheets().create(
             body=spreadsheet_body,
@@ -269,17 +338,14 @@ def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=No
         spreadsheet_id = spreadsheet.get('spreadsheetId')
         
         if not spreadsheet_id:
-            st.error("Failed to create spreadsheet - no ID returned")
-            return None, None
-
-        # Step 2: Try to move to target folder if specified
-        if spreadsheet_id and drive_service and parent_folder_id:
+            raise Exception("No spreadsheet ID returned")
+        
+        # Try to move to target folder
+        if parent_folder_id and drive_service:
             try:
-                # Get current parents
                 file = drive_service.files().get(fileId=spreadsheet_id, fields='parents').execute()
                 previous_parents = ",".join(file.get('parents', []))
                 
-                # Move to target folder
                 drive_service.files().update(
                     fileId=spreadsheet_id,
                     addParents=parent_folder_id,
@@ -287,27 +353,31 @@ def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=No
                     fields='id, parents'
                 ).execute()
                 st.success(f"✅ Spreadsheet '{title}' created and moved to target folder")
-                
-            except HttpError as move_error:
-                st.warning(f"⚠️ Spreadsheet created but couldn't move to folder: {move_error}")
-                st.info("The spreadsheet was created in your root Drive. You can manually move it if needed.")
-                # Don't fail completely - return the spreadsheet ID anyway
-                
+            except Exception as move_error:
+                st.warning(f"⚠️ Spreadsheet created in root Drive (couldn't move to folder)")
+                st.info("You can manually move it to the correct folder if needed")
+                # Still return success since spreadsheet was created
+        else:
+            st.success(f"✅ Spreadsheet '{title}' created in root Drive")
+            
         return spreadsheet_id, spreadsheet.get('spreadsheetUrl')
         
-    except HttpError as error:
-        if error.resp.status == 403:
-            st.error("❌ Permission denied. Please check service account permissions:")
-            st.error("1. Service account needs 'Editor' access to your Google Drive")
-            st.error("2. Service account needs Google Sheets API enabled")
-            st.error("3. Try sharing your parent folder with the service account email")
-        else:
-            st.error(f"HTTP Error creating Spreadsheet: {error}")
+    except Exception as error:
+        st.error(f"❌ Failed to create spreadsheet '{title}': {error}")
+        
+        # Method 3: Final fallback - create with minimal options
+        try:
+            st.info("Trying minimal creation method...")
+            simple_body = {'properties': {'title': f"{title}_fallback"}}
+            fallback_sheet = sheets_service.spreadsheets().create(body=simple_body).execute()
+            fallback_id = fallback_sheet.get('spreadsheetId')
+            if fallback_id:
+                st.warning(f"⚠️ Created fallback spreadsheet: {title}_fallback")
+                return fallback_id, fallback_sheet.get('spreadsheetUrl')
+        except Exception as fallback_error:
+            st.error(f"❌ Even fallback creation failed: {fallback_error}")
+        
         return None, None
-    except Exception as e:
-        st.error(f"Unexpected error creating Spreadsheet: {e}")
-        return None, None
-
 def find_or_create_log_sheet(drive_service, sheets_service, parent_folder_id):
     """Finds the log sheet or creates it if it doesn't exist."""
     log_sheet_name = LOG_SHEET_FILENAME_ON_DRIVE
