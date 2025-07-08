@@ -51,12 +51,15 @@ def find_drive_item_by_name(drive_service, name, mime_type=None, parent_id=None)
         query += f" and '{parent_id}' in parents"
     
     try:
-        response = drive_service.files().list(
-            q=query, 
-            spaces='drive', 
-            fields='files(id, name)',
+       response = drive_service.files().list(
+            q=query,
+            # Add these parameters for Shared Drive support
+            corpora='drive',
+            driveId=SHARED_DRIVE_ID,
+            includeItemsFromAllDrives=True,
             supportsAllDrives=True,
-            includeItemsFromAllDrives=True
+            spaces='drive',
+            fields='files(id, name)'
         ).execute()
         items = response.get('files', [])
         if items:
@@ -91,6 +94,7 @@ def create_drive_folder(drive_service, folder_name, parent_id=None):
         return None, None
 
 def initialize_drive_structure(drive_service):
+    
     """
     Initializes the entire application folder and file structure within the specified Shared Drive.
     This is the central point of control for ensuring all files are created in the correct location.
