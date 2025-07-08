@@ -98,12 +98,10 @@ def initialize_drive_structure(drive_service):
 
     master_id = st.session_state.get('master_drive_folder_id')
     if not master_id:
-        # Search for the master folder *inside* the Shared Drive
         master_id = find_drive_item_by_name(drive_service, MASTER_DRIVE_FOLDER_NAME,
                                             'application/vnd.google-apps.folder', parent_id=SHARED_DRIVE_ID)
         if not master_id:
             st.info(f"Master folder '{MASTER_DRIVE_FOLDER_NAME}' not found in Shared Drive, attempting to create it...")
-            # Create the master folder inside the Shared Drive
             master_id, _ = create_drive_folder(drive_service, MASTER_DRIVE_FOLDER_NAME, parent_id=SHARED_DRIVE_ID)
             if master_id:
                 st.success(f"Master folder '{MASTER_DRIVE_FOLDER_NAME}' created successfully in your Shared Drive.")
@@ -172,6 +170,66 @@ def create_spreadsheet(sheets_service, drive_service, title, parent_folder_id=No
         st.error(f"An unexpected error occurred creating Spreadsheet: {e}")
         return None, None
 
+def find_or_create_log_sheet(drive_service, sheets_service, parent_folder_id):
+    """Finds the log sheet or creates it if it doesn't exist."""
+    if 'log_sheet_id' in st.session_state and st.session_state.log_sheet_id:
+        return st.session_state.log_sheet_id
+
+    log_sheet_name = LOG_SHEET_FILENAME_ON_DRIVE
+    log_sheet_id = find_drive_item_by_name(drive_service, log_sheet_name,
+                                           mime_type='application/vnd.google-apps.spreadsheet',
+                                           parent_id=parent_folder_id)
+    if log_sheet_id:
+        st.session_state.log_sheet_id = log_sheet_id
+        return log_sheet_id
+    
+    st.info(f"Log sheet '{log_sheet_name}' not found. Creating it...")
+    spreadsheet_id, _ = create_spreadsheet(sheets_service, drive_service, log_sheet_name, parent_folder_id=parent_folder_id)
+    
+    if spreadsheet_id:
+        st.session_state.log_sheet_id = spreadsheet_id
+        header = [['Timestamp', 'Username', 'Role']]
+        body = {'values': header}
+        try:
+            sheets_service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id, range='Sheet1!A1',
+                valueInputOption='USER_ENTERED', body=body
+            ).execute()
+            st.success(f"Log sheet '{log_sheet_name}' created successfully.")
+        except HttpError as error:
+            st.error(f"Failed to write header to new log sheet: {error}")
+            return None
+        return spreadsheet_id
+    else:
+        st.error(f"Fatal: Failed to create log sheet '{log_sheet_name}'. Logging will be disabled.")
+        return None
+
+def log_activity(sheets_service, log_sheet_id, username, role):
+    """Appends a login activity record to the specified log sheet."""
+    if not log_sheet_id:
+        st.warning("Log Sheet ID is not available. Skipping activity logging.")
+        return False
+    
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        values = [[timestamp, username, role]]
+        body = {'values': values}
+        
+        sheets_service.spreadsheets().values().append(
+            spreadsheetId=log_sheet_id,
+            range='Sheet1!A1',
+            valueInputOption='USER_ENTERED',
+            insertDataOption='INSERT_ROWS',
+            body=body
+        ).execute()
+        return True
+    except HttpError as error:
+        st.error(f"An error occurred while logging activity: {error}")
+        return False
+    except Exception as e:
+        st.error(f"An unexpected error occurred during logging: {e}")
+        return False
+
 def find_or_create_spreadsheet(drive_service, sheets_service, sheet_name, parent_folder_id):
     """Finds a spreadsheet by name or creates it with a header if it doesn't exist."""
     sheet_id = find_drive_item_by_name(drive_service, sheet_name,
@@ -184,15 +242,12 @@ def find_or_create_spreadsheet(drive_service, sheets_service, sheet_name, parent
     sheet_id, _ = create_spreadsheet(sheets_service, drive_service, sheet_name, parent_folder_id=parent_folder_id)
     
     if sheet_id:
-        # Define the header based on the sheet name
         if sheet_name == SMART_AUDIT_MASTER_DB_SHEET_NAME:
             header = [[
                 "GSTIN", "Trade Name", "Category", "Allocated Audit Group Number", 
                 "Allocated Circle", "Financial Year", "Allocated Date", "Uploaded Date", 
                 "Office Order PDF Path", "Reassigned Flag", "Old Group Number", "Old Circle Number"
             ]]
-        elif sheet_name == LOG_SHEET_FILENAME_ON_DRIVE:
-             header = [['Timestamp', 'Username', 'Role']]
         else: # Default or e-MCM header
             header = [[
                 "Audit Group Number", "Audit Circle Number", "GSTIN", "Trade Name", "Category",
@@ -285,6 +340,103 @@ def update_spreadsheet_from_df(sheets_service, spreadsheet_id, df_to_write):
     except Exception as e:
         st.error(f"An unexpected error occurred while updating the Spreadsheet: {e}")
         return False
+
+def load_mcm_periods(drive_service):
+    """Loads the MCM periods configuration file from Google Drive."""
+    mcm_periods_file_id = st.session_state.get('mcm_periods_drive_file_id')
+    if not mcm_periods_file_id:
+        if st.session_state.get('master_drive_folder_id'):
+            mcm_periods_file_id = find_drive_item_by_name(drive_service, MCM_PERIODS_FILENAME_ON_DRIVE,
+                                                          parent_id=st.session_state.master_drive_folder_id)
+            st.session_state.mcm_periods_drive_file_id = mcm_periods_file_id
+        else:
+            return {}
+
+    if mcm_periods_file_id:
+        try:
+            request = drive_service.files().get_media(fileId=mcm_periods_file_id)
+            fh = BytesIO()
+            downloader = MediaIoBaseDownload(fh, request)
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+            fh.seek(0)
+            return json.load(fh)
+        except HttpError as error:
+            if error.resp.status == 404:
+                st.session_state.mcm_periods_drive_file_id = None
+            else:
+                st.error(f"Error loading '{MCM_PERIODS_FILENAME_ON_DRIVE}' from Drive: {error}")
+            return {}
+        except json.JSONDecodeError:
+            st.error(f"Error decoding JSON from '{MCM_PERIODS_FILENAME_ON_DRIVE}'. File might be corrupted.")
+            return {}
+        except Exception as e:
+            st.error(f"Unexpected error loading '{MCM_PERIODS_FILENAME_ON_DRIVE}': {e}")
+            return {}
+    return {}
+
+def save_mcm_periods(drive_service, periods_data):
+    """Saves the MCM periods configuration file to Google Drive."""
+    master_folder_id = st.session_state.get('master_drive_folder_id')
+    if not master_folder_id:
+        st.error("Master Drive folder ID not set. Cannot save MCM periods configuration.")
+        return False
+
+    mcm_periods_file_id = st.session_state.get('mcm_periods_drive_file_id')
+    file_content = json.dumps(periods_data, indent=4).encode('utf-8')
+    fh = BytesIO(file_content)
+    media_body = MediaIoBaseUpload(fh, mimetype='application/json', resumable=True)
+
+    try:
+        if mcm_periods_file_id:
+            file_metadata_update = {'name': MCM_PERIODS_FILENAME_ON_DRIVE}
+            drive_service.files().update(
+                fileId=mcm_periods_file_id,
+                body=file_metadata_update,
+                media_body=media_body,
+                fields='id, name',
+                supportsAllDrives=True
+            ).execute()
+        else:
+            file_metadata_create = {'name': MCM_PERIODS_FILENAME_ON_DRIVE, 'parents': [master_folder_id]}
+            new_file = drive_service.files().create(
+                body=file_metadata_create,
+                media_body=media_body,
+                fields='id, name',
+                supportsAllDrives=True
+            ).execute()
+            st.session_state.mcm_periods_drive_file_id = new_file.get('id')
+        return True
+    except HttpError as error:
+        st.error(f"Error saving '{MCM_PERIODS_FILENAME_ON_DRIVE}' to Drive: {error}")
+        return False
+    except Exception as e:
+        st.error(f"Unexpected error saving '{MCM_PERIODS_FILENAME_ON_DRIVE}': {e}")
+        return False
+
+def append_to_spreadsheet(sheets_service, spreadsheet_id, values_to_append):
+    """Appends rows to a spreadsheet."""
+    try:
+        body = {'values': values_to_append}
+        sheet_metadata = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        sheets = sheet_metadata.get('sheets', '')
+        first_sheet_title = sheets[0].get("properties", {}).get("title", "Sheet1")
+
+        append_result = sheets_service.spreadsheets().values().append(
+            spreadsheetId=spreadsheet_id,
+            range=f"{first_sheet_title}!A1",
+            valueInputOption='USER_ENTERED',
+            body=body
+        ).execute()
+        return append_result
+    except HttpError as error:
+        st.error(f"An error occurred appending to Spreadsheet: {error}")
+        return None
+    except Exception as e:
+        st.error(f"Unexpected error appending to Spreadsheet: {e}")
+        return None
+
 
 # # google_utils.py
 # from datetime import datetime 
