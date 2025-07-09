@@ -17,6 +17,26 @@ def login_page():
     </style>
     """, unsafe_allow_html=True)
     
+    # --- MAINTENANCE BANNER ---
+    st.markdown("""
+    <div style="
+        background-color: #ffcdd2; 
+        color: #c62828; 
+        padding: 20px; 
+        border: 2px solid #c62828;
+        border-radius: 8px; 
+        font-family: Arial, sans-serif; 
+        margin-bottom: 25px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    ">
+        <h2 style="margin-top: 0; color: #b71c1c; border-bottom: 2px solid #ef9a9a; padding-bottom: 10px;">
+            &#9888; Application Under Maintenance
+        </h2>
+        <p style="font-size: 1.1em;">The application is currently undergoing maintenance to move to ONE Drive integration issue. We are working to restore full functionality as soon as possible.</p>
+        <p>Functions will not be working properly .Try after some time .</p>
+        <p style="margin-bottom: 0;">Thank you for your patience.</p>
+    </div>
+    """, unsafe_allow_html=True)
     # Render the title
     st.markdown("<div class='page-main-title'>e-MCM App</div>", unsafe_allow_html=True)
     st.markdown("<h2 class='page-app-subtitle'>GST Audit 1 Commissionerate</h2>", unsafe_allow_html=True)
