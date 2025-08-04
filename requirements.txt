@@ -1,7 +1,6 @@
 streamlit
 pandas
 Pillow
-plotly
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
@@ -15,3 +14,7 @@ PyPDF2
 streamlit-aggrid
 xlsxwriter
 openpyxl
+dropbox
+plotly==5.22.0
+kaleido==0.2.1
+svglib==1.5.1
